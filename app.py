@@ -310,11 +310,11 @@ COLUMN_ALIASES = {
 
 
 def find_column(df, key):
-    """根据别名找到实际列名"""
+    """根据别名找到实际列名（按别名优先级搜索，避免短别名误匹配）"""
     aliases = COLUMN_ALIASES.get(key, [key])
-    for col in df.columns:
-        col_str = str(col).replace("\n", " ").strip()
-        for alias in aliases:
+    for alias in aliases:
+        for col in df.columns:
+            col_str = str(col).replace("\n", " ").strip()
             if alias in col_str:
                 return col
     return None
@@ -959,7 +959,7 @@ st.markdown("### 📥 导出")
 
 
 def build_formatted_excel(export_df):
-    """按价格链路表输出格式规范生成带样式的Excel"""
+    """按完整价格链路-11.xlsx的精确格式生成Excel（位置编码样式）"""
     wb = Workbook()
     ws = wb.active
     ws.title = "Sheet1"
@@ -968,29 +968,104 @@ def build_formatted_excel(export_df):
     n_cols = len(columns)
     n_rows = len(export_df)
 
-    # ── 表头样式 ──
-    header_font = Font(name="맑은 고딕", size=10, bold=True, color="FFFFFF")
-    header_fill = PatternFill(start_color="000000", end_color="000000", fill_type="solid")
-    header_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
-    data_font = Font(name="맑은 고딕", size=10)
-    data_align = Alignment(vertical="center")
-    thin_border = Border(
-        left=Side(style="thin", color="D9D9D9"),
-        right=Side(style="thin", color="D9D9D9"),
-        top=Side(style="thin", color="D9D9D9"),
-        bottom=Side(style="thin", color="D9D9D9"),
-    )
+    # ── 58列位置编码样式（对标完整价格链路-11.xlsx）──
+    # 表头填充色分组（AARRGGBB格式，FF=完全不透明）
+    HEADER_COLORS = {
+        # A-O (1-15): 黑色
+        **{i: "FF000000" for i in range(1, 16)},
+        # P-S (16-19): 深灰
+        **{i: "FF3F3F3F" for i in range(16, 20)},
+        # T-Y (20-25) + AD(30): 橙色
+        **{i: "FFC65A14" for i in range(20, 26)},
+        30: "FFC65A14",
+        # Z-AC (26-29): 红色
+        **{i: "FFC10002" for i in range(26, 30)},
+        # AE-AH (31-34) + AJ-AO (36-41): 绿色
+        **{i: "FF92D04F" for i in range(31, 35)},
+        **{i: "FF92D04F" for i in range(36, 42)},
+        # AI (35): 无填充（特殊）
+        35: None,
+        # AP (42): 亮红
+        42: "FFFE0300",
+        # AQ-AU (43-47): 深蓝
+        **{i: "FF00205C" for i in range(43, 48)},
+        # AV (48): 浅绿
+        48: "FFA9D08D",
+        # AW-BF (49-58): 红色
+        **{i: "FFC10002" for i in range(49, 59)},
+    }
+
+    # 表头不加粗的列（D=4, E=5, F=6, H=8）
+    HEADER_NOT_BOLD = {4, 5, 6, 8}
+
+    # 数据行数字格式（按列位置）
+    DATA_FORMATS = {
+        1: "@",       # A 负责人
+        2: "@",       # B 对接人
+        3: "@",       # C 频道名
+        4: "@",       # D PID
+        5: "@",       # E 组
+        6: "mm-dd-yy",  # F 团购时间
+        10: "@",      # J 商品ID
+        11: "@",      # K 商品名
+        12: "@",      # L 承接SKU ID
+        13: "@",      # M SKU
+        14: "General",  # N 数量
+        16: "0.00",   # P 报名原价
+        17: "$#,##0.00",  # Q 百补金额
+        18: "0%",     # R 百补力度
+        19: "0.00%",  # S 叠加补贴力度
+        20: "$#,##0.00",  # T 页面价
+        22: "$#,##0.00",  # V 店铺券
+        25: "General",  # Y code金额
+        26: "General",  # Z code预算
+        27: "0.00%",  # AA 折扣率
+        28: "$#,##0.00",  # AB 最终价格
+        29: "0",      # AC GMV
+        30: "#,##0.0",  # AD ROI
+        31: "General",  # AE 站外美金
+        32: "#,##0",  # AF 站外韩元
+        33: "General",  # AG 站外链接
+        34: "General",  # AH 站外截图
+        35: "General",  # AI 比价结果
+        43: "@",      # AQ shortkey
+        48: "@",      # AV 活动ID
+    }
+
+    # 数据行水平居中（h=center）的列
+    CENTER_H = {16, 19, 20, 25, 26, 27, 28}  # P,S,T,Y,Z,AA,AB
+
+    # 列宽
+    COL_WIDTHS = {
+        1: 7, 2: 10.6, 3: 8, 4: 13, 5: 8.4, 6: 13,
+        10: 16.7, 11: 36.7, 12: 18.3, 13: 25.6,
+        16: 11.6, 19: 10.1,
+    }
+    DEFAULT_WIDTH = 13
 
     # ── 写表头（第1行）──
+    header_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
     for c_idx, col_name in enumerate(columns, 1):
-        cell = ws.cell(row=1, column=c_idx, value=str(col_name).replace("\n", "\n"))
-        cell.font = header_font
-        cell.fill = header_fill
+        cell = ws.cell(row=1, column=c_idx, value=str(col_name))
+        # 字体：白色，大部分加粗，D/E/F/H除外
+        is_bold = c_idx not in HEADER_NOT_BOLD
+        # AI列(35)特殊：红色字，无填充
+        if c_idx == 35:
+            cell.font = Font(name="맑은 고딕", size=10, bold=True, color="BE0E1E")
+        else:
+            cell.font = Font(name="맑은 고딕", size=10, bold=is_bold, color="FFFFFF")
+        # 填充色
+        fill_color = HEADER_COLORS.get(c_idx, "000000")
+        if fill_color:
+            cell.fill = PatternFill(start_color=fill_color, end_color=fill_color, fill_type="solid")
         cell.alignment = header_align
-        cell.border = thin_border
     ws.row_dimensions[1].height = 68
 
     # ── 写数据（第2行起）──
+    data_font = Font(name="맑은 고딕", size=10)
+    align_v = Alignment(vertical="center")
+    align_hv = Alignment(horizontal="center", vertical="center")
+
     for r_idx, (_, row) in enumerate(export_df.iterrows(), 2):
         for c_idx, col_name in enumerate(columns, 1):
             val = row[col_name]
@@ -998,86 +1073,33 @@ def build_formatted_excel(export_df):
                 val = None
             cell = ws.cell(row=r_idx, column=c_idx, value=val)
             cell.font = data_font
-            cell.alignment = data_align
-            cell.border = thin_border
+            cell.alignment = align_hv if c_idx in CENTER_H else align_v
+            # 数字格式
+            fmt = DATA_FORMATS.get(c_idx)
+            if fmt and fmt != "General":
+                cell.number_format = fmt
+            # 文本格式列确保值为字符串
+            if fmt == "@" and val is not None:
+                cell.value = str(val)
         ws.row_dimensions[r_idx].height = 24
 
-    # ── 列格式映射（按语义key → 数字格式 + 列宽）──
-    # 格式: col_map key → (number_format, width)
-    COL_FORMAT = {
-        "负责人": ("@", 7),
-        "对接人": ("@", 11),
-        "频道名": ("@", 8),
-        "组": ("@", 8),
-        "团购时间": ("mm-dd-yy", 13),
-        "商品ID": ("@", 17),
-        "承接SKU_ID": ("@", 18),
-        "SKU": ("@", 26),
-        "商品名": ("@", 37),
-        "报名原价": ("0.00", 13),
-        "百补金额": ("$#,##0.00", 13),
-        "百补力度": ("0%", 13),
-        "叠加补贴力度": ("0.00%", 13),
-        "页面价": ("$#,##0.00", 13),
-        "店铺券": ("$#,##0.00", 13),
-        "code金额": ("0", 13),
-        "code预算": ("0", 13),
-        "折扣率": ("0.00%", 13),
-        "最终价格": ("$#,##0.00", 13),
-        "GMV": ("0", 13),
-        "ROI": ("#,##0.0", 13),
-        "站外韩元": ("#,##0", 13),
-        "站外美金": ("0.00", 13),
-        "站外链接": ("@", 20),
-        "比价结果": ("@", 13),
-        "数量": ("0", 13),
-    }
-
-    # 建立 实际列名 → (format, width) 的映射
-    col_fmt_map = {}
-    for key, (fmt, width) in COL_FORMAT.items():
-        actual_col = col_map.get(key)
-        if actual_col:
-            col_fmt_map[actual_col] = (fmt, width)
-
-    # 对未在col_map中但表头含"ID"/"PID"的列，也强制@格式
-    for col_name in columns:
-        if col_name not in col_fmt_map:
-            col_upper = str(col_name).replace("\n", " ").upper()
-            if "ID" in col_upper or "PID" in col_upper or "SHORTKEY" in col_upper:
-                col_fmt_map[col_name] = ("@", 17)
-
-    # ── 应用列格式 + 列宽 ──
-    for c_idx, col_name in enumerate(columns, 1):
+    # ── 列宽 ──
+    for c_idx in range(1, n_cols + 1):
         letter = get_column_letter(c_idx)
-        fmt_info = col_fmt_map.get(col_name)
-        if fmt_info:
-            num_fmt, width = fmt_info
-            ws.column_dimensions[letter].width = width
-            for r in range(2, n_rows + 2):
-                cell = ws.cell(row=r, column=c_idx)
-                cell.number_format = num_fmt
-                # 文本格式列确保值为字符串
-                if num_fmt == "@" and cell.value is not None:
-                    cell.value = str(cell.value)
-        else:
-            ws.column_dimensions[letter].width = 13
+        ws.column_dimensions[letter].width = COL_WIDTHS.get(c_idx, DEFAULT_WIDTH)
 
-    # 商品名列自动换行
-    if col_map.get("商品名"):
-        name_col_idx = columns.index(col_map["商品名"]) + 1
+    # 商品名列(K=11)自动换行
+    if n_cols >= 11:
         for r in range(2, n_rows + 2):
-            ws.cell(row=r, column=name_col_idx).alignment = Alignment(
+            ws.cell(row=r, column=11).alignment = Alignment(
                 vertical="center", wrap_text=True
             )
 
-    # ── 合并单元格：负责人/频道名/组 按网红合并 ──
-    merge_keys = ["负责人", "频道名", "组"]
-    # 用频道名ffill确定网红分组边界
+    # ── 合并单元格：A-F 按网红合并 ──
+    # 用频道名(C列)ffill确定网红分组边界
     channel_col = col_map.get("频道名")
     if channel_col and channel_col in columns:
         ch_series = export_df[channel_col].ffill()
-        # 找分组边界
         groups = []
         start = 0
         for i in range(1, len(ch_series)):
@@ -1086,26 +1108,22 @@ def build_formatted_excel(export_df):
                 start = i
         groups.append((start, len(ch_series) - 1))
 
-        for key in merge_keys:
-            actual_col = col_map.get(key)
-            if not actual_col or actual_col not in columns:
-                continue
-            c_idx = columns.index(actual_col) + 1
+        # 合并 A-F（列1-6）
+        merge_col_indices = [i for i in range(1, 7) if i <= n_cols]
+        for c_idx in merge_col_indices:
             for g_start, g_end in groups:
-                if g_end > g_start:  # 至少2行才合并
-                    # Excel行号 = pandas索引 + 2（第1行是表头）
+                if g_end > g_start:
                     ws.merge_cells(
                         start_row=g_start + 2,
                         start_column=c_idx,
                         end_row=g_end + 2,
                         end_column=c_idx,
                     )
-                    # 合并后居中对齐
                     ws.cell(row=g_start + 2, column=c_idx).alignment = Alignment(
                         horizontal="center", vertical="center"
                     )
 
-    # ── 冻结窗格：B2（冻结第1行 + A列）──
+    # ── 冻结窗格：B2（冻结表头行 + A列）──
     ws.freeze_panes = "B2"
 
     # ── 输出 ──
