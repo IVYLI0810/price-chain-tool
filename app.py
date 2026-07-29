@@ -463,6 +463,15 @@ for idx, row in df.iterrows():
     row_num = idx + 2 + header_row  # Excel行号
     name = str(row.get(col_name, f"第{row_num}行"))[:20] if col_name else f"第{row_num}行"
 
+    # 跳过空白行（商品名、商品ID、报名原价全为空 → 非数据行）
+    _name_val = row.get(col_name) if col_name else None
+    _pid_val = row.get(col_map.get("商品ID")) if col_map.get("商品ID") else None
+    _price_check = row.get(col_price) if col_price else None
+    if (pd.isna(_name_val) or str(_name_val).strip() == "") and \
+       (pd.isna(_pid_val) or str(_pid_val).strip() == "") and \
+       (pd.isna(_price_check) or _price_check == 0):
+        continue
+
     # 校验1: code金额必须为整数或.5
     if check_code_round:
         if auto_code:
@@ -538,17 +547,27 @@ col5.metric("AE价高商品", f"{price_high_count} 个", delta=f"-{price_high_co
 st.markdown("---")
 if errors:
     st.error(f"🚨 发现 {len(errors)} 个错误（必须修正）")
-    for e in errors[:10]:
-        st.write(f"  ❌ {e}")
-    if len(errors) > 10:
-        st.write(f"  ... 还有 {len(errors)-10} 个错误")
+    # 解析为表格
+    err_rows = []
+    for e in errors:
+        # 格式: "行XX [商品名]: 详情"
+        m = re.match(r"行(\d+)\s*\[(.+?)\]:\s*(.+)", e)
+        if m:
+            err_rows.append({"行号": int(m.group(1)), "商品名": m.group(2), "问题": m.group(3)})
+        else:
+            err_rows.append({"行号": "", "商品名": "", "问题": e})
+    st.dataframe(pd.DataFrame(err_rows), width="stretch", hide_index=True, height=300)
 
 if warnings:
-    st.warning(f"⚠️ {len(warnings)} 个比价警告（AE价格高于站外）")
-    for w in warnings[:10]:
-        st.write(f"  ⚠️ {w}")
-    if len(warnings) > 10:
-        st.write(f"  ... 还有 {len(warnings)-10} 个警告")
+    st.warning(f"⚠️ {len(warnings)} 个警告")
+    warn_rows = []
+    for w in warnings:
+        m = re.match(r"行(\d+)\s*\[(.+?)\]:\s*(.+)", w)
+        if m:
+            warn_rows.append({"行号": int(m.group(1)), "商品名": m.group(2), "问题": m.group(3)})
+        else:
+            warn_rows.append({"行号": "", "商品名": "", "问题": w})
+    st.dataframe(pd.DataFrame(warn_rows), width="stretch", hide_index=True, height=300)
 
 if not errors and not warnings:
     st.success("✅ 全部校验通过，无异常！")
