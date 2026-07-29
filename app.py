@@ -8,6 +8,9 @@ import pandas as pd
 import numpy as np
 from io import BytesIO
 import re
+import requests
+import time
+from urllib.parse import quote
 
 # ─────────────────────────────────────────────
 # 页面配置
@@ -139,6 +142,59 @@ with st.sidebar:
         "比价：AE最终价 vs 站外最低价",
         value=True,
     )
+
+    st.markdown("---")
+    st.markdown("**验价容差**")
+    st.caption("报名价 vs 实际页面价的允许偏差")
+
+    tolerance_pass_pct = st.slider(
+        "通过阈值 (≤此偏差为正常)",
+        min_value=1,
+        max_value=10,
+        value=5,
+        step=1,
+        format="%d%%",
+        help="偏差在此范围内视为正常价格浮动，不报错",
+    )
+    tolerance_warn_pct = st.slider(
+        "警告阈值 (≤此偏差需留意)",
+        min_value=5,
+        max_value=30,
+        value=15,
+        step=1,
+        format="%d%%",
+        help="偏差超过通过阈值但在警告阈值内，标黄提醒",
+    )
+    tolerance_abs_usd = st.number_input(
+        "绝对差额红线 ($)",
+        min_value=10.0,
+        max_value=200.0,
+        value=50.0,
+        step=5.0,
+        help="不管百分比多少，差额超过此金额直接标红",
+    )
+
+    st.markdown("---")
+    st.markdown("**Naver 比价 API**")
+    st.caption("站外最低价查询（密钥只存浏览器会话）")
+
+    naver_id = st.text_input(
+        "Client ID",
+        value=st.session_state.get("naver_id", ""),
+        key="naver_id_input",
+        placeholder="Naver 开发者平台 Client ID",
+    )
+    naver_secret = st.text_input(
+        "Client Secret",
+        value=st.session_state.get("naver_secret", ""),
+        type="password",
+        key="naver_secret_input",
+        placeholder="Naver 开发者平台 Client Secret",
+    )
+    if st.button("💾 保存 Naver 密钥", width="stretch"):
+        st.session_state["naver_id"] = naver_id.strip()
+        st.session_state["naver_secret"] = naver_secret.strip()
+        st.success("已保存 ✓")
 
 # ─────────────────────────────────────────────
 # 主区域
@@ -560,6 +616,298 @@ edited_df = st.data_editor(
 )
 
 # ─────────────────────────────────────────────
+# Step 5.5: Naver 站外比价
+# ─────────────────────────────────────────────
+st.markdown("---")
+st.markdown("### 🔎 Naver 站外比价")
+st.caption(
+    "用最终优惠价对比韩国站外最低价。搜索词 = Brand + 商品名核心词 + SKU选项。"
+    "若Naver最低是AE链接→标红并再搜站外；若最低是站外→直接记录。"
+)
+
+# Naver 比价工具函数
+NAVER_BLOCK_WORDS = ["중고", "리퍼", "박스훼손", "렌탈", "중고나라", "당근", "번개장터"]
+AE_DOMAINS = ["aliexpress.com", "aliexpress.us", "aliexpress.ru", "aliexpress.io"]
+
+
+def _clean_html(raw_html):
+    return re.sub(r"<.*?>", "", raw_html)
+
+
+def _is_ae_link(url):
+    url_lower = str(url).lower()
+    return any(d in url_lower for d in AE_DOMAINS)
+
+
+def _build_naver_query(brand, product_name, sku_option):
+    """Brand + 商品名核心词(前4) + SKU选项"""
+    parts = []
+    if pd.notna(brand) and str(brand).strip():
+        parts.append(str(brand).strip())
+    if pd.notna(product_name):
+        generic = ["야외", "캠핑", "피크닉", "여행", "휴대용", "다기능",
+                   "스테인리스", "스틸", "대용량", "경량", "방수", "미니"]
+        words = str(product_name).strip().split()
+        core = [w for w in words if w not in generic]
+        parts.extend(core[:4])
+    if pd.notna(sku_option):
+        sku = str(sku_option).strip()
+        if sku and sku not in ("单一sku", "단일sku", "nan", ""):
+            parts.append(sku)
+    query = " ".join(parts)
+    return query[:60] if len(query) > 60 else query
+
+
+def _search_naver_shop(query, cid, csecret, exclude_ae=False):
+    """调 Naver Shopping API，返回 (results_list, error_str)"""
+    encoded = quote(query)
+    url = f"https://openapi.naver.com/v1/search/shop.json?query={encoded}&display=20&sort=asc"
+    headers = {"X-Naver-Client-Id": cid, "X-Naver-Client-Secret": csecret}
+    try:
+        resp = requests.get(url, headers=headers, timeout=10)
+        if resp.status_code != 200:
+            return [], f"API错误({resp.status_code})"
+        items = resp.json().get("items", [])
+        results = []
+        for item in items:
+            title = _clean_html(item.get("title", ""))
+            link = item.get("link", "")
+            price = int(item.get("lprice", 0))
+            mall = item.get("mallName", "")
+            if any(w in title.lower() for w in NAVER_BLOCK_WORDS):
+                continue
+            if exclude_ae and _is_ae_link(link):
+                continue
+            results.append({
+                "title": title,
+                "link": link,
+                "price_krw": price,
+                "price_usd": round(price / exchange_rate, 2),
+                "mall": mall,
+                "is_ae": _is_ae_link(link),
+            })
+        results.sort(key=lambda x: x["price_krw"])
+        return results, None
+    except requests.exceptions.Timeout:
+        return [], "超时"
+    except Exception as e:
+        return [], str(e)[:40]
+
+
+# 获取 Naver 密钥
+_use_naver_id = st.session_state.get("naver_id", naver_id).strip()
+_use_naver_secret = st.session_state.get("naver_secret", naver_secret).strip()
+
+if not _use_naver_id or not _use_naver_secret:
+    st.info("👈 请先在侧边栏填入 Naver API 密钥并保存，然后即可开始站外比价。")
+else:
+    # 识别 Brand 列和 SKU 文字列
+    col_brand_name = None
+    for c in df.columns:
+        cs = str(c).replace("\n", " ").strip()
+        if "Brand" in cs or "brand" in cs:
+            col_brand_name = c
+            break
+
+    col_sku_text = None
+    for c in df.columns:
+        cs = str(c).replace("\n", " ").strip()
+        if ("SKU" in cs or "옵션" in cs) and "ID" not in cs:
+            col_sku_text = c
+            break
+
+    st.caption(
+        f"列识别 → Brand: `{col_brand_name or '未找到'}` | "
+        f"SKU文字: `{col_sku_text or '未找到'}` | "
+        f"商品名: `{col_name or '未找到'}`"
+    )
+
+    if st.button("🚀 开始 Naver 站外比价", type="primary", width="stretch"):
+        # 初始化结果存储
+        naver_results = []
+        total = len(df)
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+
+        for idx, row in df.iterrows():
+            i = df.index.get_loc(idx)
+            status_text.text(f"正在比价 [{i+1}/{total}]...")
+            progress_bar.progress((i + 1) / total)
+
+            brand_val = row.get(col_brand_name, "") if col_brand_name else ""
+            name_val = row.get(col_name, "") if col_name else ""
+            sku_val = row.get(col_sku_text, "") if col_sku_text else ""
+            final_price = row.get("_最终价格", 0)
+            reg_price = row.get(col_price, 0)
+
+            query = _build_naver_query(brand_val, name_val, sku_val)
+
+            res_entry = {
+                "idx": idx,
+                "query": query,
+                "lowest_is_ae": False,
+                "ae_price_krw": None,
+                "ae_price_usd": None,
+                "ae_link": "",
+                "ae_title": "",
+                "reg_flag": "",
+                "ext_price_krw": None,
+                "ext_price_usd": None,
+                "ext_link": "",
+                "ext_mall": "",
+                "ext_title": "",
+                "vs_final": "",
+                "error": "",
+            }
+
+            if not query.strip():
+                res_entry["error"] = "无搜索词"
+                naver_results.append(res_entry)
+                continue
+
+            # 第一轮搜索（含AE）
+            all_res, err = _search_naver_shop(query, _use_naver_id, _use_naver_secret, exclude_ae=False)
+            if err:
+                res_entry["error"] = err
+                naver_results.append(res_entry)
+                time.sleep(0.3)
+                continue
+
+            if not all_res:
+                res_entry["error"] = "无匹配"
+                naver_results.append(res_entry)
+                time.sleep(0.3)
+                continue
+
+            lowest = all_res[0]
+
+            if lowest["is_ae"]:
+                # 最低是AE → 记录 + 判断报名价 + 再搜站外
+                res_entry["lowest_is_ae"] = True
+                res_entry["ae_price_krw"] = lowest["price_krw"]
+                res_entry["ae_price_usd"] = lowest["price_usd"]
+                res_entry["ae_link"] = lowest["link"]
+                res_entry["ae_title"] = lowest["title"][:40]
+
+                if pd.notna(reg_price) and reg_price > 0 and lowest["price_usd"] < reg_price:
+                    res_entry["reg_flag"] = "⚠️ AE实际价<报名价"
+
+                # 第二轮：排除AE搜站外
+                time.sleep(0.3)
+                ext_res, ext_err = _search_naver_shop(query, _use_naver_id, _use_naver_secret, exclude_ae=True)
+                if ext_res:
+                    ext_low = ext_res[0]
+                    res_entry["ext_price_krw"] = ext_low["price_krw"]
+                    res_entry["ext_price_usd"] = ext_low["price_usd"]
+                    res_entry["ext_link"] = ext_low["link"]
+                    res_entry["ext_mall"] = ext_low["mall"]
+                    res_entry["ext_title"] = ext_low["title"][:40]
+            else:
+                # 最低是站外 → 直接记录
+                res_entry["ext_price_krw"] = lowest["price_krw"]
+                res_entry["ext_price_usd"] = lowest["price_usd"]
+                res_entry["ext_link"] = lowest["link"]
+                res_entry["ext_mall"] = lowest["mall"]
+                res_entry["ext_title"] = lowest["title"][:40]
+
+            # 最终价 vs 站外最低
+            if res_entry["ext_price_usd"] and pd.notna(final_price) and final_price > 0:
+                if final_price <= res_entry["ext_price_usd"]:
+                    res_entry["vs_final"] = "✅ AE价低"
+                else:
+                    diff_pct = (final_price - res_entry["ext_price_usd"]) / res_entry["ext_price_usd"] * 100
+                    if diff_pct <= tolerance_pass_pct:
+                        res_entry["vs_final"] = f"≈ 持平(+{diff_pct:.0f}%)"
+                    elif diff_pct <= tolerance_warn_pct:
+                        res_entry["vs_final"] = f"⚠️ AE略高(+{diff_pct:.0f}%)"
+                    else:
+                        res_entry["vs_final"] = f"❌ AE价高(+{diff_pct:.0f}%)"
+
+            naver_results.append(res_entry)
+            time.sleep(0.3)
+
+        # 存入 session_state 以便 rerun 后仍可查看
+        st.session_state["naver_results"] = naver_results
+        status_text.text(f"比价完成！共 {total} 个商品")
+        progress_bar.progress(1.0)
+
+    # 展示 Naver 比价结果
+    if "naver_results" in st.session_state:
+        naver_results = st.session_state["naver_results"]
+
+        # 统计
+        n_ok = sum(1 for r in naver_results if "AE价低" in r.get("vs_final", ""))
+        n_warn = sum(1 for r in naver_results if "略高" in r.get("vs_final", "") or "持平" in r.get("vs_final", ""))
+        n_bad = sum(1 for r in naver_results if "AE价高" in r.get("vs_final", ""))
+        n_ae_lowest = sum(1 for r in naver_results if r.get("lowest_is_ae"))
+        n_flag = sum(1 for r in naver_results if r.get("reg_flag"))
+        n_err = sum(1 for r in naver_results if r.get("error"))
+
+        nc1, nc2, nc3, nc4, nc5 = st.columns(5)
+        nc1.metric("✅ AE价低", n_ok)
+        nc2.metric("⚠️ 略高/持平", n_warn)
+        nc3.metric("❌ AE价高", n_bad)
+        nc4.metric("AE是Naver最低", n_ae_lowest)
+        nc5.metric("查询失败", n_err)
+
+        if n_flag > 0:
+            st.warning(f"⚠️ {n_flag} 个商品：AE实际价 < 行业报名价（报名价可能虚高）")
+
+        # 构建结果表
+        naver_display = []
+        for r in naver_results:
+            row_data = {
+                "搜索词": r["query"][:30],
+                "最低是AE": "是" if r["lowest_is_ae"] else "否",
+                "AE价(₩)": r["ae_price_krw"] or "",
+                "AE价($)": r["ae_price_usd"] or "",
+                "报名价标记": r["reg_flag"],
+                "站外最低(₩)": r["ext_price_krw"] or "",
+                "站外最低($)": r["ext_price_usd"] or "",
+                "站外商城": r["ext_mall"],
+                "站外链接": r["ext_link"],
+                "vs最终价": r["vs_final"],
+                "错误": r["error"],
+            }
+            naver_display.append(row_data)
+
+        df_naver = pd.DataFrame(naver_display)
+
+        # 筛选视图
+        naver_filter = st.radio(
+            "显示",
+            ["全部", "仅看问题行（AE价高/报名价虚高）", "仅看失败"],
+            horizontal=True,
+            key="naver_filter",
+        )
+        if naver_filter == "仅看问题行（AE价高/报名价虚高）":
+            mask = df_naver["vs_final"].str.contains("AE价高", na=False) | (df_naver["报名价标记"] != "")
+            df_naver_show = df_naver[mask]
+        elif naver_filter == "仅看失败":
+            df_naver_show = df_naver[df_naver["错误"] != ""]
+        else:
+            df_naver_show = df_naver
+
+        st.dataframe(
+            df_naver_show,
+            width="stretch",
+            hide_index=True,
+            column_config={
+                "站外链接": st.column_config.LinkColumn("打开"),
+            },
+        )
+
+        # 将 Naver 结果写回 df 以便导出
+        for r in naver_results:
+            idx = r["idx"]
+            if r["ext_price_krw"]:
+                df.loc[idx, "_站外美金"] = r["ext_price_usd"]
+            if r["ext_link"]:
+                df.loc[idx, "_站外链接"] = r["ext_link"]
+            if r["vs_final"]:
+                df.loc[idx, "_比价结果"] = r["vs_final"]
+
+# ─────────────────────────────────────────────
 # Step 6: 导出
 # ─────────────────────────────────────────────
 st.markdown("---")
@@ -589,6 +937,13 @@ with col_a:
         export_df[col_map["折扣率"]] = export_df["_折扣率"]
     if col_result:
         export_df[col_result] = export_df["_比价结果"]
+    # Naver 比价结果写回
+    if col_map.get("站外美金") and "_站外美金" in export_df.columns:
+        export_df[col_map["站外美金"]] = export_df["_站外美金"]
+    if col_map.get("站外链接") and "_站外链接" in export_df.columns:
+        export_df[col_map["站外链接"]] = export_df["_站外链接"]
+    elif "_站外链接" in export_df.columns:
+        export_df["站外比价链接"] = export_df["_站外链接"]
 
     # 去掉内部辅助列
     internal_cols = [c for c in export_df.columns if c.startswith("_")]
@@ -666,6 +1021,252 @@ if col_name:
     else:
         st.info("未在商品名中发现过往价格记录。")
 
+# ─────────────────────────────────────────────
+# 验价工作台
+# ─────────────────────────────────────────────
+st.markdown("---")
+st.markdown("### 🔍 验价工作台")
+st.caption(
+    "核验行业组报名原价是否准确。系统先自动初筛可疑商品，"
+    "你只需验证被标红的行 → 填回实际价格 → 导出验价报告留档。"
+)
+
+col_pid = col_pid if "col_pid" in dir() else col_map.get("商品ID")
+col_sku_id = col_map.get("承接SKU_ID")
+
+# ── 自动初筛 ──
+verify_flags = pd.Series("", index=df.index)
+
+# 初筛1: 同商品ID跨网红报名价不一致
+if col_pid:
+    pid_filled = df[col_pid].ffill()
+    for pid in pid_filled.dropna().unique():
+        mask = pid_filled == pid
+        prices_in_group = df.loc[mask, col_price].dropna()
+        if len(prices_in_group) > 1 and prices_in_group.nunique() > 1:
+            p_min, p_max = prices_in_group.min(), prices_in_group.max()
+            if p_min > 0 and (p_max - p_min) / p_min > 0.03:
+                for i in df.index[mask]:
+                    existing = verify_flags.get(i, "")
+                    note = f"同商品报价不一致(${p_min:.2f}~${p_max:.2f})"
+                    verify_flags[i] = f"{existing}; {note}" if existing else note
+
+# 初筛2: 报名价为组内离群值（偏离均值>25%）
+if col_pid:
+    for pid in pid_filled.dropna().unique():
+        mask = pid_filled == pid
+        prices_in_group = df.loc[mask, col_price].dropna()
+        if len(prices_in_group) >= 3:
+            mean_p = prices_in_group.mean()
+            if mean_p > 0:
+                for i in df.index[mask]:
+                    p = df.loc[i, col_price]
+                    if pd.notna(p) and abs(p - mean_p) / mean_p > 0.25:
+                        existing = verify_flags.get(i, "")
+                        note = f"离群报价(均值${mean_p:.2f}, 此行${p:.2f})"
+                        verify_flags[i] = f"{existing}; {note}" if existing else note
+
+# 初筛3: 报名原价 > $500（高价商品需确认）
+for i in df.index:
+    p = df.loc[i, col_price]
+    if pd.notna(p) and p > 500:
+        existing = verify_flags.get(i, "")
+        note = f"高价商品(${p:.0f})需确认"
+        verify_flags[i] = f"{existing}; {note}" if existing else note
+
+# 初筛4: 缺少SKU ID（无法精确验价）
+if col_sku_id:
+    for i in df.index:
+        sku_val = df.loc[i, col_sku_id]
+        if pd.isna(sku_val) or str(sku_val).strip() == "":
+            existing = verify_flags.get(i, "")
+            note = "缺SKU_ID"
+            verify_flags[i] = f"{existing}; {note}" if existing else note
+
+df["_验价标记"] = verify_flags
+flagged_mask = df["_验价标记"] != ""
+flagged_count = flagged_mask.sum()
+
+# 显示初筛结果
+if flagged_count > 0:
+    st.warning(f"⚠️ 自动初筛发现 {flagged_count} 条可疑记录（共 {len(df)} 条），建议优先验证标红行。")
+else:
+    st.success("✅ 自动初筛未发现明显异常。仍建议抽检确认。")
+
+# 筛选视图
+verify_filter = st.radio(
+    "显示范围",
+    ["仅看可疑行", "全部行"],
+    horizontal=True,
+    key="verify_filter",
+)
+
+if verify_filter == "仅看可疑行" and flagged_count > 0:
+    df_verify = df[flagged_mask].copy()
+else:
+    df_verify = df.copy()
+
+# ── 构建验价表格 ──
+verify_cols = {}
+
+# 序号
+verify_cols["#"] = range(1, len(df_verify) + 1)
+
+# 商品名（截断）
+if col_name:
+    verify_cols["商品名"] = df_verify[col_name].astype(str).str[:25]
+
+# 商品ID
+if col_pid:
+    verify_cols["商品ID"] = pid_filled.loc[df_verify.index].astype(str)
+
+# SKU ID
+if col_sku_id:
+    verify_cols["SKU_ID"] = df_verify[col_sku_id].astype(str)
+
+# 频道名
+if col_channel:
+    verify_cols["网红"] = df_verify["_频道名_filled"].astype(str).str[:12] if "_频道名_filled" in df.columns else ""
+
+# 行业报名价
+verify_cols["行业报名价($)"] = df_verify[col_price].round(2)
+
+# 初筛标记
+verify_cols["初筛标记"] = df_verify["_验价标记"]
+
+# 商品链接（可点击）
+if col_pid:
+    verify_cols["商品链接"] = [
+        f"https://www.aliexpress.com/item/{str(int(float(pid)))}.html?gatewayAdapt=kor2glo"
+        if pd.notna(pid) and str(pid).strip() != "" else ""
+        for pid in pid_filled.loc[df_verify.index]
+    ]
+
+# 实际页面价（用户手动填写）
+verify_cols["实际页面价($)"] = [np.nan] * len(df_verify)
+
+# 验证状态（用户选择）
+verify_cols["验证状态"] = ["待验证"] * len(df_verify)
+
+df_verify_table = pd.DataFrame(verify_cols)
+
+st.markdown(f"**验价表格**（在「实际页面价」列填入你在商品页看到的价格，「验证状态」列选择结果）")
+
+edited_verify = st.data_editor(
+    df_verify_table,
+    width="stretch",
+    hide_index=True,
+    num_rows="fixed",
+    column_config={
+        "#": st.column_config.NumberColumn(width="small"),
+        "商品名": st.column_config.TextColumn(width="medium"),
+        "商品ID": st.column_config.TextColumn(width="small"),
+        "SKU_ID": st.column_config.TextColumn(width="small"),
+        "网红": st.column_config.TextColumn(width="small"),
+        "行业报名价($)": st.column_config.NumberColumn(format="%.2f"),
+        "初筛标记": st.column_config.TextColumn(width="medium"),
+        "商品链接": st.column_config.LinkColumn("打开链接", width="small"),
+        "实际页面价($)": st.column_config.NumberColumn(
+            format="%.2f",
+            help="打开商品链接，找到对应SKU，填入页面显示的价格",
+        ),
+        "验证状态": st.column_config.SelectboxColumn(
+            options=["待验证", "✅ 一致", "⚠️ 有差异", "❌ 严重不符", "🚫 商品下架"],
+            help="对比行业报名价和实际页面价后选择",
+        ),
+    },
+)
+
+# ── 自动对比分析 ──
+st.markdown("---")
+st.markdown("**验价对比结果**")
+
+# 计算差异
+has_actual = edited_verify["实际页面价($)"].notna() & (edited_verify["实际页面价($)"] > 0)
+if has_actual.any():
+    edited_verify["差额($)"] = np.where(
+        has_actual,
+        (edited_verify["行业报名价($)"] - edited_verify["实际页面价($)"]).round(2),
+        np.nan,
+    )
+    edited_verify["偏差率"] = np.where(
+        has_actual & (edited_verify["实际页面价($)"] > 0),
+        ((edited_verify["行业报名价($)"] - edited_verify["实际页面价($)"]) / edited_verify["实际页面价($)"] * 100).round(1),
+        np.nan,
+    )
+    # 自动判定（使用侧边栏容差参数）
+    def auto_judge(row):
+        if pd.isna(row.get("偏差率")):
+            return row.get("验证状态", "待验证")
+        dev_pct = abs(row["偏差率"])
+        dev_abs = abs(row.get("差额($)", 0))
+        # 绝对差额超红线 → 直接报错
+        if dev_abs > tolerance_abs_usd:
+            return "❌ 严重不符"
+        # 百分比判定
+        if dev_pct <= tolerance_pass_pct:
+            return "✅ 一致"
+        elif dev_pct <= tolerance_warn_pct:
+            return "⚠️ 有差异"
+        else:
+            return "❌ 严重不符"
+
+    edited_verify["验证状态"] = edited_verify.apply(auto_judge, axis=1)
+
+    # 显示统计
+    verified_count = has_actual.sum()
+    match_count = (edited_verify["验证状态"] == "✅ 一致").sum()
+    diff_count = (edited_verify["验证状态"] == "⚠️ 有差异").sum()
+    bad_count = (edited_verify["验证状态"] == "❌ 严重不符").sum()
+
+    vc1, vc2, vc3, vc4 = st.columns(4)
+    vc1.metric("已验证", f"{verified_count}/{len(edited_verify)}")
+    vc2.metric("✅ 一致", f"{match_count}")
+    vc3.metric("⚠️ 有差异", f"{diff_count}")
+    vc4.metric("❌ 严重不符", f"{bad_count}")
+
+    # 显示有差异的行
+    problem_rows = edited_verify[
+        edited_verify["验证状态"].isin(["⚠️ 有差异", "❌ 严重不符"])
+    ]
+    if not problem_rows.empty:
+        st.error(f"以下 {len(problem_rows)} 条记录报名价与实际价不符，需找行业组确认：")
+        st.dataframe(
+            problem_rows[["商品名", "商品ID", "行业报名价($)", "实际页面价($)", "差额($)", "偏差率", "验证状态"]],
+            width="stretch",
+            hide_index=True,
+        )
+
+    # 更新展示表
+    st.dataframe(
+        edited_verify[["商品名", "商品ID", "行业报名价($)", "实际页面价($)", "差额($)", "偏差率", "验证状态"]],
+        width="stretch",
+        hide_index=True,
+    )
+else:
+    st.info("👆 请在上方表格的「实际页面价」列填入价格，系统会自动计算差异并判定结果。")
+
+# ── 导出验价报告 ──
+st.markdown("---")
+st.markdown("**导出验价报告**")
+st.caption("导出带时间戳的验价记录，作为工作留档。万一后续有价格争议，这就是你的核验证据。")
+
+from datetime import datetime
+
+report_buffer = BytesIO()
+report_df = edited_verify.copy()
+report_df["验价时间"] = datetime.now().strftime("%Y-%m-%d %H:%M")
+report_df["验价人"] = ""  # 用户可自行填写
+report_df.to_excel(report_buffer, index=False, engine="openpyxl")
+report_buffer.seek(0)
+
+st.download_button(
+    label="📥 导出验价报告（含时间戳）",
+    data=report_buffer,
+    file_name=f"验价报告_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+)
+
 # 页脚
 st.markdown("---")
-st.caption("网红团购一站式平台 · 价格链路模块 v1.0 | 数据仅在本地浏览器处理，不上传任何服务器")
+st.caption("网红团购一站式平台 · 价格链路模块 v1.2 | 数据仅在本地浏览器处理，不上传任何服务器")
