@@ -120,10 +120,10 @@ with st.sidebar:
         "目标总补贴比例",
         min_value=15,
         max_value=25,
-        value=23,
+        value=24,
         step=1,
         format="%d%%",
-        help="工具按此比例倒推code。设23%留2个点余量，需要时可手动调到25%",
+        help="工具按此比例倒推code。设24%留1个点余量，需要时可手动调到25%",
         disabled=not auto_code,
     )
     target_subsidy_rate = target_subsidy_pct / 100.0
