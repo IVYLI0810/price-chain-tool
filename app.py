@@ -175,26 +175,36 @@ with st.sidebar:
     )
 
     st.markdown("---")
-    st.markdown("**Naver 比价 API**")
-    st.caption("站外最低价查询（密钥只存浏览器会话）")
+    enable_naver = st.checkbox(
+        "启用 Naver 站外比价",
+        value=False,
+        help="首次提品需要完整比价时勾选；行业改价后重跑链路时可不勾，节省时间",
+    )
 
-    naver_id = st.text_input(
-        "Client ID",
-        value=st.session_state.get("naver_id", ""),
-        key="naver_id_input",
-        placeholder="Naver 开发者平台 Client ID",
-    )
-    naver_secret = st.text_input(
-        "Client Secret",
-        value=st.session_state.get("naver_secret", ""),
-        type="password",
-        key="naver_secret_input",
-        placeholder="Naver 开发者平台 Client Secret",
-    )
-    if st.button("💾 保存 Naver 密钥", width="stretch"):
-        st.session_state["naver_id"] = naver_id.strip()
-        st.session_state["naver_secret"] = naver_secret.strip()
-        st.success("已保存 ✓")
+    if enable_naver:
+        st.markdown("**Naver 比价 API**")
+        st.caption("站外最低价查询（密钥只存浏览器会话）")
+
+        naver_id = st.text_input(
+            "Client ID",
+            value=st.session_state.get("naver_id", ""),
+            key="naver_id_input",
+            placeholder="Naver 开发者平台 Client ID",
+        )
+        naver_secret = st.text_input(
+            "Client Secret",
+            value=st.session_state.get("naver_secret", ""),
+            type="password",
+            key="naver_secret_input",
+            placeholder="Naver 开发者平台 Client Secret",
+        )
+        if st.button("💾 保存 Naver 密钥", width="stretch"):
+            st.session_state["naver_id"] = naver_id.strip()
+            st.session_state["naver_secret"] = naver_secret.strip()
+            st.success("已保存 ✓")
+    else:
+        naver_id = ""
+        naver_secret = ""
 
 # ─────────────────────────────────────────────
 # 主区域
@@ -616,14 +626,22 @@ edited_df = st.data_editor(
 )
 
 # ─────────────────────────────────────────────
-# Step 5.5: Naver 站外比价
+# Step 5.5: Naver 站外比价（可选）
 # ─────────────────────────────────────────────
 st.markdown("---")
-st.markdown("### 🔎 Naver 站外比价")
-st.caption(
-    "用最终优惠价对比韩国站外最低价。搜索词 = Brand + 商品名核心词 + SKU选项。"
-    "若Naver最低是AE链接→标红并再搜站外；若最低是站外→直接记录。"
-)
+
+if not enable_naver:
+    st.markdown("### 🔎 站外比价（已跳过）")
+    st.info(
+        "Naver 站外比价未启用。当前仅输出价格链路计算结果。"
+        "如需完整比价报告（站外最低价 + 链接），请在左侧勾选「启用 Naver 站外比价」。"
+    )
+else:
+    st.markdown("### 🔎 Naver 站外比价")
+    st.caption(
+        "用最终优惠价对比韩国站外最低价。搜索词 = Brand + 商品名核心词 + SKU选项。"
+        "若Naver最低是AE链接→标红并再搜站外；若最低是站外→直接记录。"
+    )
 
 # Naver 比价工具函数
 NAVER_BLOCK_WORDS = ["중고", "리퍼", "박스훼손", "렌탈", "중고나라", "당근", "번개장터"]
@@ -694,218 +712,218 @@ def _search_naver_shop(query, cid, csecret, exclude_ae=False):
         return [], str(e)[:40]
 
 
-# 获取 Naver 密钥
-_use_naver_id = st.session_state.get("naver_id", naver_id).strip()
-_use_naver_secret = st.session_state.get("naver_secret", naver_secret).strip()
+    # 获取 Naver 密钥
+    _use_naver_id = st.session_state.get("naver_id", naver_id).strip()
+    _use_naver_secret = st.session_state.get("naver_secret", naver_secret).strip()
 
-if not _use_naver_id or not _use_naver_secret:
-    st.info("👈 请先在侧边栏填入 Naver API 密钥并保存，然后即可开始站外比价。")
-else:
-    # 识别 Brand 列和 SKU 文字列
-    col_brand_name = None
-    for c in df.columns:
-        cs = str(c).replace("\n", " ").strip()
-        if "Brand" in cs or "brand" in cs:
-            col_brand_name = c
-            break
+    if not _use_naver_id or not _use_naver_secret:
+        st.info("👈 请先在侧边栏填入 Naver API 密钥并保存，然后即可开始站外比价。")
+    else:
+        # 识别 Brand 列和 SKU 文字列
+        col_brand_name = None
+        for c in df.columns:
+            cs = str(c).replace("\n", " ").strip()
+            if "Brand" in cs or "brand" in cs:
+                col_brand_name = c
+                break
 
-    col_sku_text = None
-    for c in df.columns:
-        cs = str(c).replace("\n", " ").strip()
-        if ("SKU" in cs or "옵션" in cs) and "ID" not in cs:
-            col_sku_text = c
-            break
+        col_sku_text = None
+        for c in df.columns:
+            cs = str(c).replace("\n", " ").strip()
+            if ("SKU" in cs or "옵션" in cs) and "ID" not in cs:
+                col_sku_text = c
+                break
 
-    st.caption(
-        f"列识别 → Brand: `{col_brand_name or '未找到'}` | "
-        f"SKU文字: `{col_sku_text or '未找到'}` | "
-        f"商品名: `{col_name or '未找到'}`"
-    )
+        st.caption(
+            f"列识别 → Brand: `{col_brand_name or '未找到'}` | "
+            f"SKU文字: `{col_sku_text or '未找到'}` | "
+            f"商品名: `{col_name or '未找到'}`"
+        )
 
-    if st.button("🚀 开始 Naver 站外比价", type="primary", width="stretch"):
-        # 初始化结果存储
-        naver_results = []
-        total = len(df)
-        progress_bar = st.progress(0)
-        status_text = st.empty()
+        if st.button("🚀 开始 Naver 站外比价", type="primary", width="stretch"):
+            # 初始化结果存储
+            naver_results = []
+            total = len(df)
+            progress_bar = st.progress(0)
+            status_text = st.empty()
 
-        for idx, row in df.iterrows():
-            i = df.index.get_loc(idx)
-            status_text.text(f"正在比价 [{i+1}/{total}]...")
-            progress_bar.progress((i + 1) / total)
+            for idx, row in df.iterrows():
+                i = df.index.get_loc(idx)
+                status_text.text(f"正在比价 [{i+1}/{total}]...")
+                progress_bar.progress((i + 1) / total)
 
-            brand_val = row.get(col_brand_name, "") if col_brand_name else ""
-            name_val = row.get(col_name, "") if col_name else ""
-            sku_val = row.get(col_sku_text, "") if col_sku_text else ""
-            final_price = row.get("_最终价格", 0)
-            reg_price = row.get(col_price, 0)
+                brand_val = row.get(col_brand_name, "") if col_brand_name else ""
+                name_val = row.get(col_name, "") if col_name else ""
+                sku_val = row.get(col_sku_text, "") if col_sku_text else ""
+                final_price = row.get("_最终价格", 0)
+                reg_price = row.get(col_price, 0)
 
-            query = _build_naver_query(brand_val, name_val, sku_val)
+                query = _build_naver_query(brand_val, name_val, sku_val)
 
-            res_entry = {
-                "idx": idx,
-                "query": query,
-                "lowest_is_ae": False,
-                "ae_price_krw": None,
-                "ae_price_usd": None,
-                "ae_link": "",
-                "ae_title": "",
-                "reg_flag": "",
-                "ext_price_krw": None,
-                "ext_price_usd": None,
-                "ext_link": "",
-                "ext_mall": "",
-                "ext_title": "",
-                "vs_final": "",
-                "error": "",
-            }
+                res_entry = {
+                    "idx": idx,
+                    "query": query,
+                    "lowest_is_ae": False,
+                    "ae_price_krw": None,
+                    "ae_price_usd": None,
+                    "ae_link": "",
+                    "ae_title": "",
+                    "reg_flag": "",
+                    "ext_price_krw": None,
+                    "ext_price_usd": None,
+                    "ext_link": "",
+                    "ext_mall": "",
+                    "ext_title": "",
+                    "vs_final": "",
+                    "error": "",
+                }
 
-            if not query.strip():
-                res_entry["error"] = "无搜索词"
-                naver_results.append(res_entry)
-                continue
+                if not query.strip():
+                    res_entry["error"] = "无搜索词"
+                    naver_results.append(res_entry)
+                    continue
 
-            # 第一轮搜索（含AE）
-            all_res, err = _search_naver_shop(query, _use_naver_id, _use_naver_secret, exclude_ae=False)
-            if err:
-                res_entry["error"] = err
-                naver_results.append(res_entry)
-                time.sleep(0.3)
-                continue
+                # 第一轮搜索（含AE）
+                all_res, err = _search_naver_shop(query, _use_naver_id, _use_naver_secret, exclude_ae=False)
+                if err:
+                    res_entry["error"] = err
+                    naver_results.append(res_entry)
+                    time.sleep(0.3)
+                    continue
 
-            if not all_res:
-                res_entry["error"] = "无匹配"
-                naver_results.append(res_entry)
-                time.sleep(0.3)
-                continue
+                if not all_res:
+                    res_entry["error"] = "无匹配"
+                    naver_results.append(res_entry)
+                    time.sleep(0.3)
+                    continue
 
-            lowest = all_res[0]
+                lowest = all_res[0]
 
-            if lowest["is_ae"]:
-                # 最低是AE → 记录 + 判断报名价 + 再搜站外
-                res_entry["lowest_is_ae"] = True
-                res_entry["ae_price_krw"] = lowest["price_krw"]
-                res_entry["ae_price_usd"] = lowest["price_usd"]
-                res_entry["ae_link"] = lowest["link"]
-                res_entry["ae_title"] = lowest["title"][:40]
+                if lowest["is_ae"]:
+                    # 最低是AE → 记录 + 判断报名价 + 再搜站外
+                    res_entry["lowest_is_ae"] = True
+                    res_entry["ae_price_krw"] = lowest["price_krw"]
+                    res_entry["ae_price_usd"] = lowest["price_usd"]
+                    res_entry["ae_link"] = lowest["link"]
+                    res_entry["ae_title"] = lowest["title"][:40]
 
-                if pd.notna(reg_price) and reg_price > 0 and lowest["price_usd"] < reg_price:
-                    res_entry["reg_flag"] = "⚠️ AE实际价<报名价"
+                    if pd.notna(reg_price) and reg_price > 0 and lowest["price_usd"] < reg_price:
+                        res_entry["reg_flag"] = "⚠️ AE实际价<报名价"
 
-                # 第二轮：排除AE搜站外
-                time.sleep(0.3)
-                ext_res, ext_err = _search_naver_shop(query, _use_naver_id, _use_naver_secret, exclude_ae=True)
-                if ext_res:
-                    ext_low = ext_res[0]
-                    res_entry["ext_price_krw"] = ext_low["price_krw"]
-                    res_entry["ext_price_usd"] = ext_low["price_usd"]
-                    res_entry["ext_link"] = ext_low["link"]
-                    res_entry["ext_mall"] = ext_low["mall"]
-                    res_entry["ext_title"] = ext_low["title"][:40]
-            else:
-                # 最低是站外 → 直接记录
-                res_entry["ext_price_krw"] = lowest["price_krw"]
-                res_entry["ext_price_usd"] = lowest["price_usd"]
-                res_entry["ext_link"] = lowest["link"]
-                res_entry["ext_mall"] = lowest["mall"]
-                res_entry["ext_title"] = lowest["title"][:40]
-
-            # 最终价 vs 站外最低
-            if res_entry["ext_price_usd"] and pd.notna(final_price) and final_price > 0:
-                if final_price <= res_entry["ext_price_usd"]:
-                    res_entry["vs_final"] = "✅ AE价低"
+                    # 第二轮：排除AE搜站外
+                    time.sleep(0.3)
+                    ext_res, ext_err = _search_naver_shop(query, _use_naver_id, _use_naver_secret, exclude_ae=True)
+                    if ext_res:
+                        ext_low = ext_res[0]
+                        res_entry["ext_price_krw"] = ext_low["price_krw"]
+                        res_entry["ext_price_usd"] = ext_low["price_usd"]
+                        res_entry["ext_link"] = ext_low["link"]
+                        res_entry["ext_mall"] = ext_low["mall"]
+                        res_entry["ext_title"] = ext_low["title"][:40]
                 else:
-                    diff_pct = (final_price - res_entry["ext_price_usd"]) / res_entry["ext_price_usd"] * 100
-                    if diff_pct <= tolerance_pass_pct:
-                        res_entry["vs_final"] = f"≈ 持平(+{diff_pct:.0f}%)"
-                    elif diff_pct <= tolerance_warn_pct:
-                        res_entry["vs_final"] = f"⚠️ AE略高(+{diff_pct:.0f}%)"
+                    # 最低是站外 → 直接记录
+                    res_entry["ext_price_krw"] = lowest["price_krw"]
+                    res_entry["ext_price_usd"] = lowest["price_usd"]
+                    res_entry["ext_link"] = lowest["link"]
+                    res_entry["ext_mall"] = lowest["mall"]
+                    res_entry["ext_title"] = lowest["title"][:40]
+
+                # 最终价 vs 站外最低
+                if res_entry["ext_price_usd"] and pd.notna(final_price) and final_price > 0:
+                    if final_price <= res_entry["ext_price_usd"]:
+                        res_entry["vs_final"] = "✅ AE价低"
                     else:
-                        res_entry["vs_final"] = f"❌ AE价高(+{diff_pct:.0f}%)"
+                        diff_pct = (final_price - res_entry["ext_price_usd"]) / res_entry["ext_price_usd"] * 100
+                        if diff_pct <= tolerance_pass_pct:
+                            res_entry["vs_final"] = f"≈ 持平(+{diff_pct:.0f}%)"
+                        elif diff_pct <= tolerance_warn_pct:
+                            res_entry["vs_final"] = f"⚠️ AE略高(+{diff_pct:.0f}%)"
+                        else:
+                            res_entry["vs_final"] = f"❌ AE价高(+{diff_pct:.0f}%)"
 
-            naver_results.append(res_entry)
-            time.sleep(0.3)
+                naver_results.append(res_entry)
+                time.sleep(0.3)
 
-        # 存入 session_state 以便 rerun 后仍可查看
-        st.session_state["naver_results"] = naver_results
-        status_text.text(f"比价完成！共 {total} 个商品")
-        progress_bar.progress(1.0)
+            # 存入 session_state 以便 rerun 后仍可查看
+            st.session_state["naver_results"] = naver_results
+            status_text.text(f"比价完成！共 {total} 个商品")
+            progress_bar.progress(1.0)
 
-    # 展示 Naver 比价结果
-    if "naver_results" in st.session_state:
-        naver_results = st.session_state["naver_results"]
+        # 展示 Naver 比价结果
+        if "naver_results" in st.session_state:
+            naver_results = st.session_state["naver_results"]
 
-        # 统计
-        n_ok = sum(1 for r in naver_results if "AE价低" in r.get("vs_final", ""))
-        n_warn = sum(1 for r in naver_results if "略高" in r.get("vs_final", "") or "持平" in r.get("vs_final", ""))
-        n_bad = sum(1 for r in naver_results if "AE价高" in r.get("vs_final", ""))
-        n_ae_lowest = sum(1 for r in naver_results if r.get("lowest_is_ae"))
-        n_flag = sum(1 for r in naver_results if r.get("reg_flag"))
-        n_err = sum(1 for r in naver_results if r.get("error"))
+            # 统计
+            n_ok = sum(1 for r in naver_results if "AE价低" in r.get("vs_final", ""))
+            n_warn = sum(1 for r in naver_results if "略高" in r.get("vs_final", "") or "持平" in r.get("vs_final", ""))
+            n_bad = sum(1 for r in naver_results if "AE价高" in r.get("vs_final", ""))
+            n_ae_lowest = sum(1 for r in naver_results if r.get("lowest_is_ae"))
+            n_flag = sum(1 for r in naver_results if r.get("reg_flag"))
+            n_err = sum(1 for r in naver_results if r.get("error"))
 
-        nc1, nc2, nc3, nc4, nc5 = st.columns(5)
-        nc1.metric("✅ AE价低", n_ok)
-        nc2.metric("⚠️ 略高/持平", n_warn)
-        nc3.metric("❌ AE价高", n_bad)
-        nc4.metric("AE是Naver最低", n_ae_lowest)
-        nc5.metric("查询失败", n_err)
+            nc1, nc2, nc3, nc4, nc5 = st.columns(5)
+            nc1.metric("✅ AE价低", n_ok)
+            nc2.metric("⚠️ 略高/持平", n_warn)
+            nc3.metric("❌ AE价高", n_bad)
+            nc4.metric("AE是Naver最低", n_ae_lowest)
+            nc5.metric("查询失败", n_err)
 
-        if n_flag > 0:
-            st.warning(f"⚠️ {n_flag} 个商品：AE实际价 < 行业报名价（报名价可能虚高）")
+            if n_flag > 0:
+                st.warning(f"⚠️ {n_flag} 个商品：AE实际价 < 行业报名价（报名价可能虚高）")
 
-        # 构建结果表
-        naver_display = []
-        for r in naver_results:
-            row_data = {
-                "搜索词": r["query"][:30],
-                "最低是AE": "是" if r["lowest_is_ae"] else "否",
-                "AE价(₩)": r["ae_price_krw"] or "",
-                "AE价($)": r["ae_price_usd"] or "",
-                "报名价标记": r["reg_flag"],
-                "站外最低(₩)": r["ext_price_krw"] or "",
-                "站外最低($)": r["ext_price_usd"] or "",
-                "站外商城": r["ext_mall"],
-                "站外链接": r["ext_link"],
-                "vs最终价": r["vs_final"],
-                "错误": r["error"],
-            }
-            naver_display.append(row_data)
+            # 构建结果表
+            naver_display = []
+            for r in naver_results:
+                row_data = {
+                    "搜索词": r["query"][:30],
+                    "最低是AE": "是" if r["lowest_is_ae"] else "否",
+                    "AE价(₩)": r["ae_price_krw"] or "",
+                    "AE价($)": r["ae_price_usd"] or "",
+                    "报名价标记": r["reg_flag"],
+                    "站外最低(₩)": r["ext_price_krw"] or "",
+                    "站外最低($)": r["ext_price_usd"] or "",
+                    "站外商城": r["ext_mall"],
+                    "站外链接": r["ext_link"],
+                    "vs最终价": r["vs_final"],
+                    "错误": r["error"],
+                }
+                naver_display.append(row_data)
 
-        df_naver = pd.DataFrame(naver_display)
+            df_naver = pd.DataFrame(naver_display)
 
-        # 筛选视图
-        naver_filter = st.radio(
-            "显示",
-            ["全部", "仅看问题行（AE价高/报名价虚高）", "仅看失败"],
-            horizontal=True,
-            key="naver_filter",
-        )
-        if naver_filter == "仅看问题行（AE价高/报名价虚高）":
-            mask = df_naver["vs_final"].str.contains("AE价高", na=False) | (df_naver["报名价标记"] != "")
-            df_naver_show = df_naver[mask]
-        elif naver_filter == "仅看失败":
-            df_naver_show = df_naver[df_naver["错误"] != ""]
-        else:
-            df_naver_show = df_naver
+            # 筛选视图
+            naver_filter = st.radio(
+                "显示",
+                ["全部", "仅看问题行（AE价高/报名价虚高）", "仅看失败"],
+                horizontal=True,
+                key="naver_filter",
+            )
+            if naver_filter == "仅看问题行（AE价高/报名价虚高）":
+                mask = df_naver["vs_final"].str.contains("AE价高", na=False) | (df_naver["报名价标记"] != "")
+                df_naver_show = df_naver[mask]
+            elif naver_filter == "仅看失败":
+                df_naver_show = df_naver[df_naver["错误"] != ""]
+            else:
+                df_naver_show = df_naver
 
-        st.dataframe(
-            df_naver_show,
-            width="stretch",
-            hide_index=True,
-            column_config={
-                "站外链接": st.column_config.LinkColumn("打开"),
-            },
-        )
+            st.dataframe(
+                df_naver_show,
+                width="stretch",
+                hide_index=True,
+                column_config={
+                    "站外链接": st.column_config.LinkColumn("打开"),
+                },
+            )
 
-        # 将 Naver 结果写回 df 以便导出
-        for r in naver_results:
-            idx = r["idx"]
-            if r["ext_price_krw"]:
-                df.loc[idx, "_站外美金"] = r["ext_price_usd"]
-            if r["ext_link"]:
-                df.loc[idx, "_站外链接"] = r["ext_link"]
-            if r["vs_final"]:
-                df.loc[idx, "_比价结果"] = r["vs_final"]
+            # 将 Naver 结果写回 df 以便导出
+            for r in naver_results:
+                idx = r["idx"]
+                if r["ext_price_krw"]:
+                    df.loc[idx, "_站外美金"] = r["ext_price_usd"]
+                if r["ext_link"]:
+                    df.loc[idx, "_站外链接"] = r["ext_link"]
+                if r["vs_final"]:
+                    df.loc[idx, "_比价结果"] = r["vs_final"]
 
 # ─────────────────────────────────────────────
 # Step 6: 导出
