@@ -11,6 +11,9 @@ import re
 import requests
 import time
 from urllib.parse import quote
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+from openpyxl.utils import get_column_letter
 
 # ─────────────────────────────────────────────
 # 页面配置
@@ -239,7 +242,7 @@ if uploaded_file is None:
 # ─────────────────────────────────────────────
 @st.cache_data
 def load_excel(file_bytes):
-    """读取Excel，尝试识别表头行"""
+    """读取Excel，尝试识别表头行；ID类列强制按字符串读避免精度丢失"""
     df_raw = pd.read_excel(BytesIO(file_bytes), header=None)
     # 找到表头行：包含"商品报名原价"或"노미네이션가"的行
     header_row = None
@@ -253,7 +256,17 @@ def load_excel(file_bytes):
         # 默认第2行(index 1)是表头
         header_row = 1
 
-    df = pd.read_excel(BytesIO(file_bytes), header=header_row)
+    # 扫表头识别ID类列（含"ID"或"PID"或"shortkey"），强制按字符串读
+    header_cells = df_raw.iloc[header_row].tolist()
+    dtype_map = {}
+    for col_idx, cell in enumerate(header_cells):
+        if pd.isna(cell):
+            continue
+        cell_str = str(cell).replace("\n", " ").strip().upper()
+        if "ID" in cell_str or "PID" in cell_str or "SHORTKEY" in cell_str:
+            dtype_map[col_idx] = str
+
+    df = pd.read_excel(BytesIO(file_bytes), header=header_row, dtype=dtype_map)
     return df, header_row
 
 
@@ -778,6 +791,18 @@ def _search_naver_shop(query, cid, csecret, exclude_ae=False):
                     "error": "",
                 }
 
+                # 原表已有站外数据 → 跳过抓取，保留原值
+                existing_krw = row.get(col_krw) if col_krw else None
+                existing_usd = row.get(col_usd_ext) if col_usd_ext else None
+                has_existing = (pd.notna(existing_krw) and existing_krw not in ("", 0)) or \
+                               (pd.notna(existing_usd) and existing_usd not in ("", 0))
+                if has_existing:
+                    res_entry["ext_price_krw"] = existing_krw if pd.notna(existing_krw) else None
+                    res_entry["ext_price_usd"] = existing_usd if pd.notna(existing_usd) else None
+                    res_entry["error"] = "原表已有，跳过"
+                    naver_results.append(res_entry)
+                    continue
+
                 if not query.strip():
                     res_entry["error"] = "无搜索词"
                     naver_results.append(res_entry)
@@ -919,6 +944,7 @@ def _search_naver_shop(query, cid, csecret, exclude_ae=False):
             for r in naver_results:
                 idx = r["idx"]
                 if r["ext_price_krw"]:
+                    df.loc[idx, "_站外韩元"] = r["ext_price_krw"]
                     df.loc[idx, "_站外美金"] = r["ext_price_usd"]
                 if r["ext_link"]:
                     df.loc[idx, "_站外链接"] = r["ext_link"]
@@ -926,23 +952,185 @@ def _search_naver_shop(query, cid, csecret, exclude_ae=False):
                     df.loc[idx, "_比价结果"] = r["vs_final"]
 
 # ─────────────────────────────────────────────
-# Step 6: 导出
+# Step 6: 导出（openpyxl 格式化）
 # ─────────────────────────────────────────────
 st.markdown("---")
 st.markdown("### 📥 导出")
 
+
+def build_formatted_excel(export_df):
+    """按价格链路表输出格式规范生成带样式的Excel"""
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Sheet1"
+
+    columns = list(export_df.columns)
+    n_cols = len(columns)
+    n_rows = len(export_df)
+
+    # ── 表头样式 ──
+    header_font = Font(name="맑은 고딕", size=10, bold=True, color="FFFFFF")
+    header_fill = PatternFill(start_color="000000", end_color="000000", fill_type="solid")
+    header_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    data_font = Font(name="맑은 고딕", size=10)
+    data_align = Alignment(vertical="center")
+    thin_border = Border(
+        left=Side(style="thin", color="D9D9D9"),
+        right=Side(style="thin", color="D9D9D9"),
+        top=Side(style="thin", color="D9D9D9"),
+        bottom=Side(style="thin", color="D9D9D9"),
+    )
+
+    # ── 写表头（第1行）──
+    for c_idx, col_name in enumerate(columns, 1):
+        cell = ws.cell(row=1, column=c_idx, value=str(col_name).replace("\n", "\n"))
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = header_align
+        cell.border = thin_border
+    ws.row_dimensions[1].height = 68
+
+    # ── 写数据（第2行起）──
+    for r_idx, (_, row) in enumerate(export_df.iterrows(), 2):
+        for c_idx, col_name in enumerate(columns, 1):
+            val = row[col_name]
+            if pd.isna(val):
+                val = None
+            cell = ws.cell(row=r_idx, column=c_idx, value=val)
+            cell.font = data_font
+            cell.alignment = data_align
+            cell.border = thin_border
+        ws.row_dimensions[r_idx].height = 24
+
+    # ── 列格式映射（按语义key → 数字格式 + 列宽）──
+    # 格式: col_map key → (number_format, width)
+    COL_FORMAT = {
+        "负责人": ("@", 7),
+        "对接人": ("@", 11),
+        "频道名": ("@", 8),
+        "组": ("@", 8),
+        "团购时间": ("mm-dd-yy", 13),
+        "商品ID": ("@", 17),
+        "承接SKU_ID": ("@", 18),
+        "SKU": ("@", 26),
+        "商品名": ("@", 37),
+        "报名原价": ("0.00", 13),
+        "百补金额": ("$#,##0.00", 13),
+        "百补力度": ("0%", 13),
+        "叠加补贴力度": ("0.00%", 13),
+        "页面价": ("$#,##0.00", 13),
+        "店铺券": ("$#,##0.00", 13),
+        "code金额": ("0", 13),
+        "code预算": ("0", 13),
+        "折扣率": ("0.00%", 13),
+        "最终价格": ("$#,##0.00", 13),
+        "GMV": ("0", 13),
+        "ROI": ("#,##0.0", 13),
+        "站外韩元": ("#,##0", 13),
+        "站外美金": ("0.00", 13),
+        "站外链接": ("@", 20),
+        "比价结果": ("@", 13),
+        "数量": ("0", 13),
+    }
+
+    # 建立 实际列名 → (format, width) 的映射
+    col_fmt_map = {}
+    for key, (fmt, width) in COL_FORMAT.items():
+        actual_col = col_map.get(key)
+        if actual_col:
+            col_fmt_map[actual_col] = (fmt, width)
+
+    # 对未在col_map中但表头含"ID"/"PID"的列，也强制@格式
+    for col_name in columns:
+        if col_name not in col_fmt_map:
+            col_upper = str(col_name).replace("\n", " ").upper()
+            if "ID" in col_upper or "PID" in col_upper or "SHORTKEY" in col_upper:
+                col_fmt_map[col_name] = ("@", 17)
+
+    # ── 应用列格式 + 列宽 ──
+    for c_idx, col_name in enumerate(columns, 1):
+        letter = get_column_letter(c_idx)
+        fmt_info = col_fmt_map.get(col_name)
+        if fmt_info:
+            num_fmt, width = fmt_info
+            ws.column_dimensions[letter].width = width
+            for r in range(2, n_rows + 2):
+                cell = ws.cell(row=r, column=c_idx)
+                cell.number_format = num_fmt
+                # 文本格式列确保值为字符串
+                if num_fmt == "@" and cell.value is not None:
+                    cell.value = str(cell.value)
+        else:
+            ws.column_dimensions[letter].width = 13
+
+    # 商品名列自动换行
+    if col_map.get("商品名"):
+        name_col_idx = columns.index(col_map["商品名"]) + 1
+        for r in range(2, n_rows + 2):
+            ws.cell(row=r, column=name_col_idx).alignment = Alignment(
+                vertical="center", wrap_text=True
+            )
+
+    # ── 合并单元格：负责人/频道名/组 按网红合并 ──
+    merge_keys = ["负责人", "频道名", "组"]
+    # 用频道名ffill确定网红分组边界
+    channel_col = col_map.get("频道名")
+    if channel_col and channel_col in columns:
+        ch_series = export_df[channel_col].ffill()
+        # 找分组边界
+        groups = []
+        start = 0
+        for i in range(1, len(ch_series)):
+            if ch_series.iloc[i] != ch_series.iloc[start]:
+                groups.append((start, i - 1))
+                start = i
+        groups.append((start, len(ch_series) - 1))
+
+        for key in merge_keys:
+            actual_col = col_map.get(key)
+            if not actual_col or actual_col not in columns:
+                continue
+            c_idx = columns.index(actual_col) + 1
+            for g_start, g_end in groups:
+                if g_end > g_start:  # 至少2行才合并
+                    # Excel行号 = pandas索引 + 2（第1行是表头）
+                    ws.merge_cells(
+                        start_row=g_start + 2,
+                        start_column=c_idx,
+                        end_row=g_end + 2,
+                        end_column=c_idx,
+                    )
+                    # 合并后居中对齐
+                    ws.cell(row=g_start + 2, column=c_idx).alignment = Alignment(
+                        horizontal="center", vertical="center"
+                    )
+
+    # ── 冻结窗格：B2（冻结第1行 + A列）──
+    ws.freeze_panes = "B2"
+
+    # ── 输出 ──
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return buf
+
+
 col_a, col_b = st.columns(2)
 
 with col_a:
-    # 导出完整计算结果
+    # 构建导出DataFrame
     export_df = df.copy()
-    # 把计算列写回
+
+    # 把计算列写回原表列名
     if col_map.get("百补金额"):
         export_df[col_map["百补金额"]] = export_df["_百补金额"]
     if col_map.get("页面价"):
         export_df[col_map["页面价"]] = export_df["_页面价"]
     if col_map.get("最终价格"):
         export_df[col_map["最终价格"]] = export_df["_最终价格"]
+    if col_map.get("code金额"):
+        # Y列：覆盖为工具计算值（用户确认方案A）
+        export_df[col_map["code金额"]] = code_values.values
     if col_map.get("code预算"):
         export_df[col_map["code预算"]] = export_df["_code预算"]
     if col_map.get("GMV"):
@@ -955,9 +1143,12 @@ with col_a:
         export_df[col_map["折扣率"]] = export_df["_折扣率"]
     if col_result:
         export_df[col_result] = export_df["_比价结果"]
+
     # Naver 比价结果写回
     if col_map.get("站外美金") and "_站外美金" in export_df.columns:
         export_df[col_map["站外美金"]] = export_df["_站外美金"]
+    if col_map.get("站外韩元") and "_站外韩元" in export_df.columns:
+        export_df[col_map["站外韩元"]] = export_df["_站外韩元"]
     if col_map.get("站外链接") and "_站外链接" in export_df.columns:
         export_df[col_map["站外链接"]] = export_df["_站外链接"]
     elif "_站外链接" in export_df.columns:
@@ -967,9 +1158,8 @@ with col_a:
     internal_cols = [c for c in export_df.columns if c.startswith("_")]
     export_df = export_df.drop(columns=internal_cols)
 
-    buffer = BytesIO()
-    export_df.to_excel(buffer, index=False, engine="openpyxl")
-    buffer.seek(0)
+    # 生成格式化Excel
+    buffer = build_formatted_excel(export_df)
 
     st.download_button(
         label="📥 下载完整价格链路表（含计算结果）",
@@ -1055,24 +1245,30 @@ col_sku_id = col_map.get("承接SKU_ID")
 # ── 自动初筛 ──
 verify_flags = pd.Series("", index=df.index)
 
-# 初筛1: 同商品ID跨网红报名价不一致
-if col_pid:
-    pid_filled = df[col_pid].ffill()
-    for pid in pid_filled.dropna().unique():
-        mask = pid_filled == pid
+# 初筛1: 同SKU跨网红报名价不一致（必须按SKU ID分组，同商品ID下不同SKU价格本就不同）
+if col_sku_id:
+    sku_filled = df[col_sku_id].ffill()
+    for sku in sku_filled.dropna().unique():
+        sku_str = str(sku).strip()
+        if not sku_str:
+            continue
+        mask = sku_filled.astype(str).str.strip() == sku_str
         prices_in_group = df.loc[mask, col_price].dropna()
         if len(prices_in_group) > 1 and prices_in_group.nunique() > 1:
             p_min, p_max = prices_in_group.min(), prices_in_group.max()
             if p_min > 0 and (p_max - p_min) / p_min > 0.03:
                 for i in df.index[mask]:
                     existing = verify_flags.get(i, "")
-                    note = f"同商品报价不一致(${p_min:.2f}~${p_max:.2f})"
+                    note = f"同SKU报价不一致(${p_min:.2f}~${p_max:.2f})"
                     verify_flags[i] = f"{existing}; {note}" if existing else note
 
-# 初筛2: 报名价为组内离群值（偏离均值>25%）
-if col_pid:
-    for pid in pid_filled.dropna().unique():
-        mask = pid_filled == pid
+# 初筛2: 报名价为同SKU组内离群值（偏离均值>25%）
+if col_sku_id:
+    for sku in sku_filled.dropna().unique():
+        sku_str = str(sku).strip()
+        if not sku_str:
+            continue
+        mask = sku_filled.astype(str).str.strip() == sku_str
         prices_in_group = df.loc[mask, col_price].dropna()
         if len(prices_in_group) >= 3:
             mean_p = prices_in_group.mean()
@@ -1081,7 +1277,7 @@ if col_pid:
                     p = df.loc[i, col_price]
                     if pd.notna(p) and abs(p - mean_p) / mean_p > 0.25:
                         existing = verify_flags.get(i, "")
-                        note = f"离群报价(均值${mean_p:.2f}, 此行${p:.2f})"
+                        note = f"离群报价(同SKU均值${mean_p:.2f}, 此行${p:.2f})"
                         verify_flags[i] = f"{existing}; {note}" if existing else note
 
 # 初筛3: 报名原价 > $500（高价商品需确认）
