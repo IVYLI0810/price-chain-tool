@@ -1021,10 +1021,10 @@ def build_formatted_excel(export_df):
         26: "General",  # Z code预算
         27: "0.00%",  # AA 折扣率
         28: "$#,##0.00",  # AB 最终价格
-        29: "0",      # AC GMV
+        29: "$#,##0",  # AC GMV
         30: "#,##0.0",  # AD ROI
-        31: "General",  # AE 站外美金
-        32: "#,##0",  # AF 站外韩元
+        31: "$#,##0.00",  # AE 站外美金
+        32: "₩#,##0",  # AF 站外韩元
         33: "General",  # AG 站外链接
         34: "General",  # AH 站外截图
         35: "General",  # AI 比价结果
