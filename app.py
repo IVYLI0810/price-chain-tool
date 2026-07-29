@@ -40,24 +40,11 @@ st.markdown("""
         font-size: 0.9rem;
         margin-bottom: 1.5rem;
     }
-    .metric-card {
-        background: #f8f9fa;
-        border-radius: 10px;
-        padding: 1rem;
-        text-align: center;
-    }
-    .error-cell {
-        background-color: #ffe0e0 !important;
-    }
-    .warn-cell {
-        background-color: #fff3cd !important;
-    }
-    .ok-cell {
-        background-color: #d4edda !important;
-    }
     div[data-testid="stSidebar"] {
         background: #fafbfc;
     }
+    footer { visibility: hidden; }
+    #MainMenu { visibility: hidden; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -76,9 +63,6 @@ with st.sidebar:
         step=10.0,
         help="韩元÷此汇率=美金。当前约1550",
     )
-
-    st.markdown("---")
-    st.markdown("**补贴上限规则**")
 
     brand_plus_pct = st.slider(
         "百补比例 (Brand+)",
@@ -136,6 +120,7 @@ with st.sidebar:
 
     st.markdown("---")
     st.markdown("**校验规则**")
+
     check_code_round = st.checkbox(
         "Code金额须为整数或.5",
         value=True,
@@ -178,6 +163,7 @@ with st.sidebar:
     )
 
     st.markdown("---")
+
     enable_naver = st.checkbox(
         "启用 Naver 站外比价",
         value=False,
@@ -208,6 +194,15 @@ with st.sidebar:
     else:
         naver_id = ""
         naver_secret = ""
+
+    st.markdown("---")
+    st.markdown("**品牌维度（可选）**")
+    brand_file = st.file_uploader(
+        "上传品牌维度商品信息.xlsx",
+        type=["xlsx", "xls"],
+        help="上传后可按品牌/类目维度查看GMV分布",
+        key="brand_file_uploader",
+    )
 
 # ─────────────────────────────────────────────
 # 主区域
@@ -529,19 +524,130 @@ for idx, row in df.iterrows():
 # ─────────────────────────────────────────────
 st.markdown("---")
 
-# 概览指标
+# 概览指标（排除空白行）
 col1, col2, col3, col4, col5 = st.columns(5)
-total_items = len(df)
-total_gmv = df["_GMV"].sum()
-total_budget = df["_code预算"].sum()
-avg_roi = df["_ROI"].mean() if df["_ROI"].notna().any() else 0
-price_high_count = df["_比价结果"].str.contains("AE价高", na=False).sum()
+# 有效行：商品名/商品ID/报名原价 至少有一个非空
+_valid_mask = pd.Series(False, index=df.index)
+if col_name:
+    _valid_mask |= df[col_name].notna() & (df[col_name].astype(str).str.strip() != "")
+if col_map.get("商品ID"):
+    _valid_mask |= df[col_map["商品ID"]].notna() & (df[col_map["商品ID"]].astype(str).str.strip() != "")
+if col_price:
+    _valid_mask |= df[col_price].notna() & (df[col_price] != 0)
+df_valid = df[_valid_mask]
+
+total_items = len(df_valid)
+total_gmv = df_valid["_GMV"].sum()
+total_budget = df_valid["_code预算"].sum()
+avg_roi = df_valid["_ROI"].mean() if df_valid["_ROI"].notna().any() else 0
+price_high_count = df_valid["_比价结果"].str.contains("AE价高", na=False).sum()
 
 col1.metric("商品数", f"{total_items}")
 col2.metric("预估总GMV", f"${total_gmv:,.0f}")
 col3.metric("Code总预算", f"${total_budget:,.0f}")
 col4.metric("平均ROI", f"{avg_roi:.1f}x")
 col5.metric("AE价高商品", f"{price_high_count} 个", delta=f"-{price_high_count}" if price_high_count > 0 else "0", delta_color="inverse")
+
+# ── GMV 分布预览 ──
+# 处理品牌文件
+_brand_df = None
+if brand_file:
+    try:
+        _brand_df = pd.read_excel(brand_file)
+        # 标准化列名
+        _brand_cols = {}
+        for c in _brand_df.columns:
+            cs = str(c).replace("\n", " ").strip()
+            if "Brand" in cs:
+                _brand_cols["brand"] = c
+            elif "商品ID" in cs or "상품ID" in cs:
+                _brand_cols["pid"] = c
+            elif "一级类目" in cs or "1급" in cs:
+                _brand_cols["cat1"] = c
+        if "pid" in _brand_cols and col_map.get("商品ID"):
+            _brand_df["_pid_str"] = _brand_df[_brand_cols["pid"]].astype(str).str.strip()
+            _brand_df = _brand_df.rename(columns={
+                _brand_cols.get("brand", "_none"): "_brand",
+                _brand_cols.get("cat1", "_none"): "_cat1",
+            })
+    except Exception:
+        _brand_df = None
+
+with st.expander("📊 GMV 分布预览", expanded=False):
+    # 构建分析用df
+    _gmv_df = df_valid.copy()
+    _gmv_df["_gmv"] = _gmv_df["_GMV"]
+
+    # 如果有品牌文件，join品牌信息
+    _has_brand = False
+    if _brand_df is not None and "pid" in _brand_cols and col_map.get("商品ID"):
+        _pid_col = col_map["商品ID"]
+        _gmv_df["_pid_str"] = _gmv_df[_pid_col].astype(str).str.strip()
+        _merge_cols = ["_pid_str"]
+        if "_brand" in _brand_df.columns:
+            _merge_cols.append("_brand")
+        if "_cat1" in _brand_df.columns:
+            _merge_cols.append("_cat1")
+        _gmv_df = _gmv_df.merge(
+            _brand_df[_merge_cols].drop_duplicates(subset="_pid_str"),
+            on="_pid_str", how="left",
+        )
+        _gmv_df["_brand"] = _gmv_df.get("_brand", pd.Series()).fillna("未知品牌")
+        _gmv_df["_brand"] = _gmv_df["_brand"].replace({"#REF!": "未知品牌", "": "未知品牌"})
+        _has_brand = True
+
+    # 维度选择
+    dim_options = ["按网红"]
+    if _has_brand:
+        dim_options = ["按品牌", "按网红", "按一级类目"]
+    dim = st.radio("维度", dim_options, horizontal=True, key="gmv_dim")
+
+    # 确定分组列
+    if dim == "按品牌" and _has_brand:
+        _group_col = "_brand"
+        _group_label = "品牌"
+    elif dim == "按一级类目" and _has_brand and "_cat1" in _gmv_df.columns:
+        _group_col = "_cat1"
+        _group_label = "一级类目"
+    else:
+        _group_col = col_map.get("频道名")
+        _group_label = "网红"
+        if _group_col:
+            _gmv_df[_group_col] = _gmv_df[_group_col].ffill()
+
+    if _group_col and _group_col in _gmv_df.columns:
+        # 汇总
+        _summary = _gmv_df.groupby(_group_col).agg(
+            SKU数=("_gmv", "count"),
+            预估GMV=("_gmv", "sum"),
+        ).reset_index()
+        _summary = _summary.rename(columns={_group_col: _group_label})
+        _summary = _summary.sort_values("预估GMV", ascending=False).reset_index(drop=True)
+        _total_gmv = _summary["预估GMV"].sum()
+        _summary["占比"] = (_summary["预估GMV"] / _total_gmv * 100).round(1).astype(str) + "%"
+
+        # 如果有code预算列，加上
+        if "_code预算" in _gmv_df.columns:
+            _budget = _gmv_df.groupby(_group_col)["_code预算"].sum()
+            _summary["Code预算"] = _summary[_group_label].map(_budget).fillna(0)
+
+        # 显示Top N
+        top_n = st.slider("显示 Top N", min_value=5, max_value=min(50, len(_summary)), value=min(15, len(_summary)), key="gmv_topn")
+        _show = _summary.head(top_n)
+
+        # 表格 / 图表切换
+        view_mode = st.radio("展示形式", ["表格", "柱状图"], horizontal=True, key="gmv_view")
+
+        if view_mode == "表格":
+            st.dataframe(_show, width="stretch", hide_index=True)
+        else:
+            # 横向柱状图
+            _chart_data = _show.set_index(_group_label)["预估GMV"].sort_values(ascending=True)
+            st.bar_chart(_chart_data, horizontal=True, color="#4472C4")
+
+        st.caption(f"共 {len(_summary)} 个{_group_label}，总预估GMV ${_total_gmv:,.0f}")
+    else:
+        st.info("未识别到网红频道名列，无法生成分布。")
 
 # 校验结果
 st.markdown("---")
