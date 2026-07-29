@@ -1161,6 +1161,11 @@ with col_a:
     # 把计算列写回原表列名
     if col_map.get("百补金额"):
         export_df[col_map["百补金额"]] = export_df["_百补金额"]
+    if col_map.get("百补力度"):
+        # R列：直接用已计算的_百补力度（全托管→5%，半托POP非brand+→0不填）
+        _rate_vals = export_df["_百补力度"] if "_百补力度" in export_df.columns else None
+        if _rate_vals is not None:
+            export_df.loc[_rate_vals > 0, col_map["百补力度"]] = _rate_vals[_rate_vals > 0]
     if col_map.get("页面价"):
         export_df[col_map["页面价"]] = export_df["_页面价"]
     if col_map.get("最终价格"):
