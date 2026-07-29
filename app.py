@@ -631,8 +631,11 @@ with st.expander("📊 GMV 分布预览", expanded=False):
             _budget = _gmv_df.groupby(_group_col)["_code预算"].sum()
             _summary["Code预算"] = _summary[_group_label].map(_budget).fillna(0)
 
-        # 显示Top N
-        top_n = st.slider("显示 Top N", min_value=5, max_value=min(50, len(_summary)), value=min(15, len(_summary)), key="gmv_topn")
+        # 显示Top N（分组数不足5个时不显示滑块，直接全部展示）
+        if len(_summary) > 5:
+            top_n = st.slider("显示 Top N", min_value=5, max_value=min(50, len(_summary)), value=min(15, len(_summary)), key="gmv_topn")
+        else:
+            top_n = len(_summary)
         _show = _summary.head(top_n)
 
         # 表格 / 图表切换
