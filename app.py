@@ -108,6 +108,27 @@ with st.sidebar:
     total_cap_rate = total_cap_pct / 100.0
 
     st.markdown("---")
+    st.markdown("**Code自动计算**")
+
+    auto_code = st.checkbox(
+        "自动计算Code金额",
+        value=True,
+        help="根据目标总补贴比例自动倒推code金额（向下取到.5）。关闭则使用表格中已有的code。",
+    )
+
+    target_subsidy_pct = st.slider(
+        "目标总补贴比例",
+        min_value=15,
+        max_value=25,
+        value=23,
+        step=1,
+        format="%d%%",
+        help="工具按此比例倒推code。设23%留2个点余量，需要时可手动调到25%",
+        disabled=not auto_code,
+    )
+    target_subsidy_rate = target_subsidy_pct / 100.0
+
+    st.markdown("---")
     st.markdown("**校验规则**")
     check_code_round = st.checkbox(
         "Code金额须为整数或.5",
@@ -290,11 +311,17 @@ if col_coupon:
 else:
     coupon_values = pd.Series(0, index=df.index)
 
-# Code金额
-if col_code:
-    code_values = df[col_code].fillna(0)
+# Code金额：自动计算 或 使用表格已有值
+if auto_code:
+    # 倒推公式: code = 目标比例 × (原价 - 店铺券) - 百补金额
+    raw_code = target_subsidy_rate * (df[col_price] - coupon_values) - df["_百补金额"]
+    # 向下取到最近的0.5（例如 5.75 → 5.5, 2.3 → 2.0, 4.99 → 4.5）
+    code_values = (np.floor(raw_code * 2) / 2).clip(lower=0)
 else:
-    code_values = pd.Series(0, index=df.index)
+    if col_code:
+        code_values = df[col_code].fillna(0)
+    else:
+        code_values = pd.Series(0, index=df.index)
 
 # 最终价格 = 页面价 - 店铺券 - code
 df["_最终价格"] = df["_页面价"] - coupon_values - code_values
@@ -338,9 +365,10 @@ elif col_usd_ext:
 else:
     df["_站外美金"] = np.nan
 
-# 比价结果
+# 比价结果（站外价为0或空视为未填写，不做比价）
+_ext_invalid = df["_站外美金"].isna() | (df["_站外美金"] == 0)
 df["_比价结果"] = np.where(
-    df["_站外美金"].isna() | df["_最终价格"].isna(),
+    _ext_invalid | df["_最终价格"].isna(),
     "",
     np.where(df["_最终价格"] > df["_站外美金"], "AE价高 ⚠️",
              np.where(df["_最终价格"] < df["_站外美金"], "AE价低 ✅", "同价")),
@@ -357,8 +385,13 @@ for idx, row in df.iterrows():
     name = str(row.get(col_name, f"第{row_num}行"))[:20] if col_name else f"第{row_num}行"
 
     # 校验1: code金额必须为整数或.5
-    if check_code_round and col_code:
-        code_val = row.get(col_code)
+    if check_code_round:
+        if auto_code:
+            code_val = code_values.get(idx, 0)
+        elif col_code:
+            code_val = row.get(col_code)
+        else:
+            code_val = 0
         if pd.notna(code_val) and code_val != 0:
             remainder = code_val % 0.5
             if abs(remainder) > 0.001 and abs(remainder - 0.5) > 0.001:
@@ -390,11 +423,17 @@ for idx, row in df.iterrows():
         errors.append(f"行{row_num} [{name}]: 最终价格为负 ({final_price:.2f})")
 
     # 校验6: 报名原价异常高（疑似韩币误填入美金列）
-    if pd.notna(price_val) and price_val > 500:
+    if pd.notna(price_val) and price_val > 2000:
         corrected = price_val / exchange_rate
         errors.append(
             f"行{row_num} [{name}]: 报名原价 {price_val:,.0f} 异常高，"
             f"疑似韩币误填入美金列（若为韩币则约 ${corrected:.2f}）"
+        )
+    elif pd.notna(price_val) and price_val > 500:
+        corrected = price_val / exchange_rate
+        warnings.append(
+            f"行{row_num} [{name}]: 报名原价 ${price_val:,.0f} 较高，"
+            f"请确认是美金（若为韩币则约 ${corrected:.2f}）"
         )
 
 # ─────────────────────────────────────────────
