@@ -15,6 +15,8 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 
+import eco_pricing  # 二轮定价·生态表批量定价 核心逻辑
+
 # ─────────────────────────────────────────────
 # 页面配置
 # ─────────────────────────────────────────────
@@ -470,294 +472,170 @@ st.markdown('<div class="sub-header">网红团购一站式平台 · 模块一：
 # ─────────────────────────────────────────────
 module_mode = st.radio(
     "定价轮次",
-    ["🔵 一轮定价", "🟠 二轮定价 · 价格保护"],
+    ["🔵 一轮定价", "🟠 二轮定价 · 生态表"],
     horizontal=True,
     label_visibility="collapsed",
 )
 
 if "二轮" in module_mode:
-    st.markdown("### 🟠 二轮定价 · 价格保护")
+    st.markdown("### 🟠 二轮定价 · 生态表批量定价")
     st.caption(
-        "规则：百补固定 5%，code 帽按供给类型（POP/半托 25%、全托 35%），"
-        "唯一约束 = 二轮最终价 ≤ 一轮到手价。只调 code 压价，"
-        "给满仍压不下来的标红放行，生成超价清单供与行业谈价。"
+        "丢进【行业表 + 空白生态表 + 到手价表】，自动匹配报名价/券、按一轮到手价倒推 code，"
+        "填好生态表 P–AE 列。唯一硬约束：二轮到手价 ≤ 一轮到手价（红线）；"
+        "code 率/叠加率超阈只标红不卡。多价无 SKU 的行留空标黄、导出后人工填。"
     )
 
-    c1, c2 = st.columns(2)
-    with c1:
-        r1_file = st.file_uploader(
-            "① 上传一轮价格链路表（红线价来源）",
-            type=["xlsx", "xls"],
-            key="r1_file_uploader",
-            help="用一轮导出的完整表，系统按商品ID读取每个商品的最低最终价作为红线",
+    # ── 参数面板（默认即可，按需调整）──
+    with st.expander("⚙️ 二轮定价参数（默认即可，按需调整）", expanded=False):
+        pc1, pc2, pc3 = st.columns(3)
+        r2_brand_pct = pc1.slider("百补比例 Brand+", 0, 15, 5, 1, format="%d%%",
+                                  key="r2_brand", help="所有品统一百补，默认5%")
+        r2_pop_code_pct = pc2.slider("POP/半托 超code阈值", 10, 40, 20, 1, format="%d%%",
+                                     key="r2_pop_code", help="code率=code/页面价 超过此值标「超code」")
+        r2_full_code_pct = pc3.slider("全托 超code阈值", 10, 50, 30, 1, format="%d%%",
+                                      key="r2_full_code", help="全托/海托管适用")
+        pc4, pc5, pc6 = st.columns(3)
+        r2_pop_cap_pct = pc4.slider("POP/半托 叠加帽", 15, 50, 25, 1, format="%d%%",
+                                    key="r2_pop_cap", help="叠加率=(百补+code)/(报名价-券) 超过标「超帽」")
+        r2_full_cap_pct = pc5.slider("全托 叠加帽", 15, 60, 35, 1, format="%d%%",
+                                     key="r2_full_cap", help="全托/海托管适用")
+        r2_target_pct = pc6.slider("新品目标补贴率", 15, 30, 24, 1, format="%d%%",
+                                   key="r2_target", help="无一轮红线的新品按此比例倒推code")
+    r2_params = {
+        "brand_rate": r2_brand_pct / 100.0,
+        "pop_code_flag": r2_pop_code_pct / 100.0,
+        "full_code_flag": r2_full_code_pct / 100.0,
+        "pop_cap": r2_pop_cap_pct / 100.0,
+        "full_cap": r2_full_cap_pct / 100.0,
+        "target_rate": r2_target_pct / 100.0,
+    }
+
+    # ── 上传区 ──
+    u1, u2, u3 = st.columns(3)
+    with u1:
+        hy_file = st.file_uploader(
+            "① 行业表（报名价+券）",
+            type=["xlsx", "xls"], key="r2_hy_uploader",
+            help="含 承接ID / 承接SKU ID / 810报名价 / 店铺券金额 的表",
         )
-    with c2:
-        r2_file = st.file_uploader(
-            "② 上传二轮价格链路表（行业新报价）",
-            type=["xlsx", "xls"],
-            key="r2_file_uploader",
-            help="行业二轮提报的表，报名原价通常比一轮高",
+    with u2:
+        eco_file = st.file_uploader(
+            "② 空白生态表（待填 P–AE）",
+            type=["xlsx", "xls"], key="r2_eco_uploader",
+            help="官方生态表模板，P–AE 列留空，系统自动填",
+        )
+    with u3:
+        dj_file = st.file_uploader(
+            "③ 到手价表（红线·可选）",
+            type=["xlsx", "xls"], key="r2_dj_uploader",
+            help="一轮到手价表，系统读「最终价格」列作红线；不传则全部按新品处理",
         )
 
-    if r1_file is None or r2_file is None:
-        st.info("👆 请同时上传一轮表（红线）和二轮表（新报价），系统自动算出每个商品该给多少 code。")
+    # ── 过往表现（倾斜钩子·占位）──
+    with st.expander("📈 过往商品表现（可选 · 驱动 code 档位倾斜，开发中）", expanded=False):
+        perf_file = st.file_uploader(
+            "上传过往表现表", type=["xlsx", "xls"], key="r2_perf_uploader",
+            help="预留接口：未来按过往GMV/核销率倾斜code档位。当前不影响计算。",
+        )
+        st.caption("倾斜逻辑（determine_code_rate）已留接口，暂未启用，上传也不会改变结果。")
+    perf_df = None
+    if perf_file is not None:
+        try:
+            perf_df, _ = load_excel(perf_file.getvalue())
+        except Exception:
+            perf_df = None
+
+    if hy_file is None or eco_file is None:
+        st.info("👆 请至少上传【①行业表】和【②空白生态表】，系统自动匹配并填好 P–AE 列。③到手价表用于压价红线，建议一起传。")
         st.stop()
 
-    # ── 读取两张表 ──
-    df1, _ = load_excel(r1_file.getvalue())
-    df2, _ = load_excel(r2_file.getvalue())
-
-    def _build_map(dfx):
-        m = {}
-        for key in COLUMN_ALIASES:
-            found = find_column(dfx, key)
-            if found:
-                m[key] = found
-        return m
-
-    map1 = _build_map(df1)
-    map2 = _build_map(df2)
-
-    if "商品ID" not in map1:
-        st.error("❌ 一轮表缺少「商品ID」列，无法匹配红线价。")
-        st.stop()
-    if "商品ID" not in map2 or "报名原价" not in map2:
-        st.error("❌ 二轮表缺少「商品ID」或「报名原价」列。")
-        st.stop()
-
-    # ── 红线价：一轮每个商品的最低最终价（最保守口径）──
-    df1["_id"] = df1[map1["商品ID"]].astype(str).str.strip()
-
-    # 优先读一轮表已填的「最终价格」；若是原始空表则按一轮公式还原
-    fp1 = pd.to_numeric(df1[map1["最终价格"]], errors="coerce") if map1.get("最终价格") else pd.Series(np.nan, index=df1.index)
-    if fp1.notna().sum() == 0:
-        if "报名原价" not in map1:
-            st.error("❌ 一轮表既没有填「最终价格」，也缺少「报名原价」列，无法还原一轮红线价。")
-            st.stop()
-        p1 = pd.to_numeric(df1[map1["报名原价"]], errors="coerce")
-        b1, s1 = map1.get("是否brand+"), map1.get("供给类型")
-        if b1 and s1:
-            def _rate1(row):
-                sup = str(row.get(s1, "")).strip()
-                br = str(row.get(b1, "")).strip().upper()
-                if ("POP" in sup or "半托" in sup) and br != "Y":
-                    return 0.0
-                return brand_plus_rate
-            r1 = df1.apply(_rate1, axis=1)
-        else:
-            r1 = brand_plus_rate
-        bb1 = p1 * r1
-        pg1 = p1 - bb1
-        c1 = map1.get("店铺券")
-        cp1 = pd.to_numeric(df1[c1], errors="coerce").fillna(0) if c1 else pd.Series(0.0, index=df1.index)
-        cd1_col = map1.get("code金额")
-        cd1 = pd.to_numeric(df1[cd1_col], errors="coerce") if cd1_col else None
-        if cd1 is not None and cd1.notna().sum() > 0:
-            code1 = cd1.fillna(0)
-        else:
-            code1 = (np.floor((target_subsidy_rate * (p1 - cp1) - bb1) * 2) / 2).clip(lower=0)
-        fp1 = pg1 - cp1 - code1
-        st.info("ℹ️ 一轮表未填最终价格，已按一轮定价公式自动还原红线价。")
-
-    redline = df1.assign(_fp=fp1).dropna(subset=["_fp"]).groupby("_id")["_fp"].min().to_dict()
-
-    # ── 二轮基础数据 ──
-    price2 = map2["报名原价"]
-    df2["_id"] = df2[map2["商品ID"]].astype(str).str.strip()
-    df2[price2] = pd.to_numeric(df2[price2], errors="coerce")
-
-    coupon2_col = map2.get("店铺券")
-    qty2_col = map2.get("数量")
-    coupon2 = pd.to_numeric(df2[coupon2_col], errors="coerce").fillna(0) if coupon2_col else pd.Series(0.0, index=df2.index)
-    qty2 = pd.to_numeric(df2[qty2_col], errors="coerce").fillna(0) if qty2_col else pd.Series(0.0, index=df2.index)
-
-    # 百补固定 5%（所有品统一，不再区分 brand+）
-    df2["_百补力度"] = brand_plus_rate  # 侧栏默认 5%
-    df2["_百补金额"] = df2[price2] * df2["_百补力度"]
-    df2["_页面价"] = df2[price2] - df2["_百补金额"]
-    df2["_一轮红线价"] = df2["_id"].map(redline)
-
-    # 补贴帽按供给类型分档：全托 35%，POP/半托 25%
-    supply2 = map2.get("供给类型")
-    if supply2:
-        df2["_cap_rate"] = df2[supply2].astype(str).apply(
-            lambda s: 0.35 if "全托" in s else 0.25
+    # ── 跑定价 ──
+    try:
+        buf, preview, stats = eco_pricing.run_eco_pricing(
+            hy_file.getvalue(), eco_file.getvalue(),
+            dj_file.getvalue() if dj_file is not None else None,
+            params=r2_params, perf_df=perf_df,
         )
-    else:
-        df2["_cap_rate"] = 0.25  # 无供给类型列时默认 POP 帽
-
-    # ── 自动算 code：压到红线，但不超补贴上限 ──
-    need_code = df2["_页面价"] - coupon2 - df2["_一轮红线价"]
-    # code 必须是 0.5 的倍数：压价所需向上取到 0.5（保证不超红线），上限向下取到 0.5
-    code_ideal = np.ceil(need_code * 2) / 2
-    # 帽顶 = cap_rate × (报名价 − 券) − 百补（cap_rate 按供给类型：全托35%/POP25%）
-    max_code_raw = df2["_cap_rate"] * (df2[price2] - coupon2) - df2["_百补金额"]
-    code_max = np.floor(max_code_raw * 2) / 2
-
-    # 无一轮红线的新品：按目标补贴比例自动给 code（同一轮逻辑）
-    auto_new = (np.floor((target_subsidy_rate * (df2[price2] - coupon2) - df2["_百补金额"]) * 2) / 2).clip(lower=0)
-
-    has_redline = df2["_一轮红线价"].notna()
-    code2 = pd.Series(0.0, index=df2.index)
-    code2[has_redline] = np.minimum(code_ideal, code_max)[has_redline].clip(lower=0)
-    code2[~has_redline] = auto_new[~has_redline]
-    df2["_code金额"] = code2
-
-    df2["_最终价格"] = df2["_页面价"] - coupon2 - df2["_code金额"]
-    df2["_超价金额"] = df2["_最终价格"] - df2["_一轮红线价"]
-
-    def _status(row):
-        if pd.isna(row["_一轮红线价"]):
-            return "⚪ 新品·无一轮红线"
-        if row["_最终价格"] <= row["_一轮红线价"] + 1e-9:
-            return "✅ 压价成功"
-        return "🔴 超价放行"
-    df2["_状态"] = df2.apply(_status, axis=1)
-
-    df2["_code预算"] = qty2 * df2["_code金额"]
-    df2["_GMV"] = qty2 * df2["_页面价"]
-    df2["_ROI"] = np.where(df2["_code预算"] > 0, df2["_GMV"] / df2["_code预算"], np.nan)
-    denom2 = df2[price2] - coupon2
-    df2["_叠加补贴"] = np.where(denom2 > 0, (df2["_百补金额"] + df2["_code金额"]) / denom2, 0)
-    df2["_折扣率"] = np.where(df2["_页面价"] > 0, df2["_code金额"] / df2["_页面价"], 0)
+    except Exception as e:
+        st.error(f"❌ 处理出错：{e}")
+        st.stop()
 
     # ── 概览指标 ──
     st.markdown("---")
-    n_ok = int((df2["_状态"] == "✅ 压价成功").sum())
-    n_over = int((df2["_状态"] == "🔴 超价放行").sum())
-    n_new = int((df2["_状态"] == "⚪ 新品·无一轮红线").sum())
-    g1, g2, g3, g4, g5 = st.columns(5)
-    g1.metric("二轮商品数", len(df2))
-    g2.metric("✅ 压价成功", n_ok)
-    g3.metric("🔴 超价放行", n_over)
-    g4.metric("⚪ 新品无红线", n_new)
-    g5.metric("Code总预算", f"${df2['_code预算'].sum():,.0f}")
+    g1, g2, g3, g4, g5, g6 = st.columns(6)
+    g1.metric("生态表行数", stats["total"])
+    g2.metric("✅ 压价成功", stats["filled"])
+    g3.metric("⚠️ 超code", stats["over_code"])
+    g4.metric("⚠️ 超帽", stats["over_cap"])
+    g5.metric("🟡 待人工", stats["multi"] + stats["unreg"])
+    g6.metric("⚪ 新品无红线", stats["new"])
 
-    if n_over > 0:
-        st.warning(f"有 {n_over} 个商品即使给满 code 也压不到一轮红线价，已标红放行，请拿下方超价清单与行业谈价。")
+    if stats["over_price"] > 0:
+        st.error(f"有 {stats['over_price']} 行二轮到手价高于一轮红线（不应发生），请检查数据。")
+    if stats["multi"] > 0:
+        st.warning(f"有 {stats['multi']} 行商品在行业表有多个报名价且生态表无承接SKU，已留空标黄，导出后请人工选价。")
+    if stats["unreg"] > 0:
+        st.warning(f"有 {stats['unreg']} 行商品在行业表查无报名价（未报名），已标黄。")
 
-    # ── 结果表（超价行标红）──
-    st.markdown("### 📋 二轮定价结果")
-    name2 = map2.get("商品名")
-    supply2_col = map2.get("供给类型")
-    df_show = pd.DataFrame({
-        "商品ID": df2["_id"],
-        "商品名": (df2[name2].astype(str).str.slice(0, 28) if name2 else pd.Series("", index=df2.index)),
-        "供给类型": (df2[supply2_col].astype(str) if supply2_col else pd.Series("", index=df2.index)),
-        "帽": (df2["_cap_rate"] * 100).astype(int).astype(str) + "%",
-        "一轮红线价": df2["_一轮红线价"].round(2),
-        "二轮报名原价": df2[price2].round(2),
-        "二轮页面价": df2["_页面价"].round(2),
-        "店铺券": coupon2.round(2),
-        "code金额": df2["_code金额"],
-        "二轮最终价": df2["_最终价格"].round(2),
-        "超价金额": df2["_超价金额"].apply(lambda x: f"+{x:.2f}" if pd.notna(x) and x > 0.001 else ""),
-        "状态": df2["_状态"],
-    })
+    # ── 预览（完整带颜色 + 筛选）──
+    st.markdown("### 📋 定价预览")
+    status_opts = ["全部"] + sorted(preview["状态"].unique().tolist())
+    sel = st.selectbox("按状态筛选", status_opts, key="r2_status_filter")
+    pv = preview if sel == "全部" else preview[preview["状态"] == sel]
 
     def _hl(row):
-        if row["状态"] == "🔴 超价放行":
+        s = row["状态"]
+        if "超价" in s:
             return ["background-color:#ffe3e3"] * len(row)
-        if row["状态"] == "⚪ 新品·无一轮红线":
+        if "超code" in s or "超帽" in s:
+            return ["background-color:#ffe8cc"] * len(row)
+        if "多价" in s or "未报名" in s:
+            return ["background-color:#fff7cc"] * len(row)
+        if "新品" in s:
             return ["background-color:#f2f2f2"] * len(row)
         return [""] * len(row)
 
     _money = st.column_config.NumberColumn(format="%.2f")
+    _pct = st.column_config.NumberColumn(format="%.2f%%")
     st.dataframe(
-        df_show.style.apply(_hl, axis=1),
-        width="stretch",
-        hide_index=True,
-        height=420,
+        pv.style.apply(_hl, axis=1),
+        width="stretch", hide_index=True, height=460,
         column_config={
-            "一轮红线价": _money,
-            "二轮报名原价": _money,
-            "二轮页面价": _money,
-            "店铺券": _money,
-            "code金额": st.column_config.NumberColumn(format="%.1f"),
-            "二轮最终价": _money,
+            "报名价P": _money, "红线V": _money, "页面价T": _money,
+            "券W": _money, "到手价AC": _money,
+            "code": st.column_config.NumberColumn(format="%.1f"),
+            "叠加率S": _pct, "code率AB": _pct,
         },
     )
-
-    # ── 超价清单（给行业谈价用）──
-    if n_over > 0:
-        st.markdown("### 🔴 超价清单（与行业谈价用）")
-        st.caption("这些商品已给满补贴上限允许的 code，仍高于一轮红线，需行业下调报名原价或接受超价。")
-        ov = df2[df2["_状态"] == "🔴 超价放行"]
-        df_over = pd.DataFrame({
-            "商品ID": ov["_id"],
-            "商品名": (ov[name2].astype(str).str.slice(0, 30) if name2 else pd.Series("", index=ov.index)),
-            "一轮红线价": ov["_一轮红线价"].round(2),
-            "二轮页面价": ov["_页面价"].round(2),
-            "已给code(上限)": ov["_code金额"],
-            "二轮最终价": ov["_最终价格"].round(2),
-            "超价金额": ov["_超价金额"].round(2),
-        })
-        st.dataframe(
-            df_over,
-            width="stretch",
-            hide_index=True,
-            column_config={
-                "一轮红线价": _money,
-                "二轮页面价": _money,
-                "已给code(上限)": st.column_config.NumberColumn(format="%.1f"),
-                "二轮最终价": _money,
-                "超价金额": _money,
-            },
-        )
+    st.caption("颜色：🔴超价（红线被破，不应出现）｜🟠超code/超帽（需单独沟通）｜🟡多价待人工/未报名｜⚪新品无红线")
 
     # ── 导出 ──
     st.markdown("---")
     st.markdown("### 📥 导出")
     e1, e2 = st.columns(2)
     with e1:
-        export2 = df2.copy()
-        if map2.get("百补金额"):
-            export2[map2["百补金额"]] = export2["_百补金额"]
-        if map2.get("百补力度"):
-            _rv = export2["_百补力度"]
-            export2.loc[_rv > 0, map2["百补力度"]] = _rv[_rv > 0]
-        if map2.get("页面价"):
-            export2[map2["页面价"]] = export2["_页面价"]
-        if map2.get("code金额"):
-            export2[map2["code金额"]] = export2["_code金额"]
-        if map2.get("最终价格"):
-            export2[map2["最终价格"]] = export2["_最终价格"]
-        if map2.get("code预算"):
-            export2[map2["code预算"]] = export2["_code预算"]
-        if map2.get("GMV"):
-            export2[map2["GMV"]] = export2["_GMV"]
-        if map2.get("ROI"):
-            export2[map2["ROI"]] = export2["_ROI"]
-        if map2.get("叠加补贴力度"):
-            export2[map2["叠加补贴力度"]] = export2["_叠加补贴"]
-        if map2.get("折扣率"):
-            export2[map2["折扣率"]] = export2["_折扣率"]
-        export2 = export2.drop(columns=[c for c in export2.columns if c.startswith("_")])
-        buf2 = build_formatted_excel(export2, map2.get("频道名"))
         st.download_button(
-            label="📥 下载二轮定价表（已自动压价）",
-            data=buf2,
-            file_name="二轮定价_压价完成.xlsx",
+            label="📥 下载已填好的生态表（P–AE + 颜色 + 备注列）",
+            data=buf, file_name="810生态表_二轮定价.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             width="stretch",
         )
     with e2:
-        if n_over > 0:
-            buf3 = BytesIO()
-            df_over.to_excel(buf3, index=False, engine="openpyxl")
-            buf3.seek(0)
+        manual = preview[preview["状态"].str.contains("多价|未报名")]
+        if len(manual) > 0:
+            mbuf = BytesIO()
+            manual.to_excel(mbuf, index=False, engine="openpyxl")
+            mbuf.seek(0)
             st.download_button(
-                label="📥 下载超价清单",
-                data=buf3,
-                file_name="二轮定价_超价清单.xlsx",
+                label=f"📥 下载待人工清单（{len(manual)} 行）",
+                data=mbuf, file_name="二轮定价_待人工清单.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 width="stretch",
             )
 
     st.markdown("---")
-    st.caption("网红团购一站式平台 · 价格链路模块（二轮定价）| 数据仅在本地浏览器处理，不上传任何服务器")
+    st.caption("网红团购一站式平台 · 价格链路模块（二轮定价·生态表）| 数据仅在本地浏览器处理，不上传任何服务器")
     st.stop()
-
 
 
 # ─────────────────────────────────────────────
