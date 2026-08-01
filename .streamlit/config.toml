@@ -1,0 +1,7 @@
+[server]
+# 行业表/生态表常内嵌比价截图，单文件可达 200MB+，放宽上传上限
+maxUploadSize = 500
+enableXsrfProtection = false
+
+[browser]
+gatherUsageStats = false
