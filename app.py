@@ -583,6 +583,11 @@ if "二轮" in module_mode:
     sel = st.selectbox("按状态筛选", status_opts, key="r2_status_filter")
     pv = preview if sel == "全部" else preview[preview["状态"] == sel]
 
+    # 展示用副本：S/AB 存的是小数(0.25=25%)，预览格式不会自动×100，这里手动放大
+    pv_show = pv.copy()
+    pv_show["叠加率S"] = pv_show["叠加率S"] * 100
+    pv_show["code率AB"] = pv_show["code率AB"] * 100
+
     def _hl(row):
         s = row["状态"]
         if "超价" in s:
@@ -598,7 +603,7 @@ if "二轮" in module_mode:
     _money = st.column_config.NumberColumn(format="%.2f")
     _pct = st.column_config.NumberColumn(format="%.2f%%")
     st.dataframe(
-        pv.style.apply(_hl, axis=1),
+        pv_show.style.apply(_hl, axis=1),
         width="stretch", hide_index=True, height=460,
         column_config={
             "报名价P": _money, "红线V": _money, "页面价T": _money,
