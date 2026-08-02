@@ -113,20 +113,24 @@ def _find_col(df, subs, exclude=None, known_idx=None):
 
 
 def detect_hy_columns(df):
-    """按表头名自动识别行业表各列。返回 {逻辑列: 列下标(0-based) 或 None}。"""
+    """按表头名自动识别行业表各列。返回 {逻辑列: 列下标(0-based) 或 None}。
+
+    商品ID 与 承接ID 是两列：生态表口径可能用其中任一，故两者都识别、双索引匹配。
+    """
     id_c = _find_col(df, ["承接ID", "연계ID"])
-    # 承接SKU：承接ID 之后第一个含 SKU 的列（避免误取商品ID旁边的 SKU ID 列）
+    pid_c = _find_col(df, ["商品ID"], exclude=["承接"])
+    # 承接SKU：承接ID/商品ID 之后第一个含 SKU 的列（避免误取商品ID前面的 SKU ID 列）
     sku_c = None
-    if id_c is not None:
-        for i in range(id_c + 1, len(df.columns)):
-            if "SKU" in str(df.columns[i]).upper():
-                sku_c = i
-                break
+    anchor = id_c if id_c is not None else (pid_c if pid_c is not None else -1)
+    for i in range(anchor + 1, len(df.columns)):
+        if "SKU" in str(df.columns[i]).upper():
+            sku_c = i
+            break
     if sku_c is None:
         sku_c = _find_col(df, ["承接SKU"])
     price_c = _find_col(df, ["报名价"], exclude=["截图", "询价"])
     coupon_c = _find_col(df, ["券金额"])
-    return {"承接ID": id_c, "承接SKU": sku_c, "报名价": price_c, "店铺券": coupon_c}
+    return {"承接ID": id_c, "商品ID": pid_c, "承接SKU": sku_c, "报名价": price_c, "店铺券": coupon_c}
 
 
 def build_hy_lookups(df_hy, cols=None):
@@ -136,6 +140,7 @@ def build_hy_lookups(df_hy, cols=None):
     """
     cols = cols or detect_hy_columns(df_hy)
     id_c = cols.get("承接ID")
+    pid_c = cols.get("商品ID")
     sku_c = cols.get("承接SKU")
     price_c = cols.get("报名价")
     coupon_c = cols.get("店铺券")
@@ -145,17 +150,27 @@ def build_hy_lookups(df_hy, cols=None):
     by_id_prices = {}
 
     for _, r in df_hy.iterrows():
-        pid = norm_id(r.iloc[id_c]) if id_c is not None else ""
-        if not pid:
-            continue
         psku = norm_id(r.iloc[sku_c]) if sku_c is not None else ""
         price = parse_price(r.iloc[price_c]) if price_c is not None else None
         coupon = parse_coupon(r.iloc[coupon_c]) if coupon_c is not None else 0.0
         if price is None:
             continue
-        dual_price[(pid, psku)] = price
-        dual_coupon[(pid, psku)] = coupon
-        by_id_prices.setdefault(pid, []).append((price, coupon))
+        # 同行按 承接ID 和 商品ID 双索引（生态表口径可能用任一，两者都让它命中）
+        keys = set()
+        if id_c is not None:
+            v = norm_id(r.iloc[id_c])
+            if v:
+                keys.add(v)
+        if pid_c is not None:
+            v = norm_id(r.iloc[pid_c])
+            if v:
+                keys.add(v)
+        if not keys:
+            continue
+        for pid in keys:
+            dual_price[(pid, psku)] = price
+            dual_coupon[(pid, psku)] = coupon
+            by_id_prices.setdefault(pid, []).append((price, coupon))
 
     for pid, lst in by_id_prices.items():
         prices = sorted({round(p, 4) for p, _ in lst})
@@ -172,6 +187,97 @@ def build_hy_lookups(df_hy, cols=None):
         "coupon_single": coupon_single,
         "multi_price": multi_price,
     }
+
+
+def detect_id_changes(df_dj, df_hy, dj_cols=None, hy_cols=None):
+    """检测承接ID/承接SKU从一轮到二轮是否有变化。
+
+    匹配键：商品ID（跨轮次稳定）。
+    一轮来源：到手价表（"商品ID"列实为承接ID口径，承接SKU列）。
+    二轮来源：行业表（商品ID、承接ID、承接SKU 三列）。
+
+    返回 (changes_df, stats)：
+      changes_df: 每行一个商品，列含 商品ID/商品名/一轮承接ID/二轮承接ID/ID是否变化/
+                  一轮承接SKU/二轮承接SKU/SKU是否变化
+      stats: {"total", "id_changed", "sku_changed", "both_changed", "unchanged", "new", "r1_only"}
+    """
+    dj_cols = dj_cols or detect_dj_columns(df_dj)
+    hy_cols = hy_cols or detect_hy_columns(df_hy)
+
+    # ── 一轮到手价表索引：商品ID → (承接ID口径值, 承接SKU) ──
+    dj_pid_c = dj_cols.get("商品ID")
+    dj_sku_c = dj_cols.get("承接SKU")
+    r1_map = {}  # 商品ID → {"承接ID": ..., "承接SKU": ...}
+    if dj_pid_c is not None:
+        for _, r in df_dj.iterrows():
+            pid = norm_id(r.iloc[dj_pid_c])
+            if not pid:
+                continue
+            sku = norm_id(r.iloc[dj_sku_c]) if dj_sku_c is not None else ""
+            r1_map[pid] = {"承接ID": pid, "承接SKU": sku}  # 到手价表商品ID列=承接ID口径
+
+    # ── 二轮行业表索引：商品ID → (承接ID, 承接SKU, 商品名) ──
+    hy_pid_c = hy_cols.get("商品ID")
+    hy_id_c = hy_cols.get("承接ID")
+    hy_sku_c = hy_cols.get("承接SKU")
+    name_c = _find_col(df_hy, ["商品名", "상품명"])
+    r2_map = {}  # 商品ID → {"承接ID": ..., "承接SKU": ..., "商品名": ...}
+    if hy_pid_c is not None:
+        for _, r in df_hy.iterrows():
+            pid = norm_id(r.iloc[hy_pid_c])
+            if not pid:
+                continue
+            link_id = norm_id(r.iloc[hy_id_c]) if hy_id_c is not None else pid
+            sku = norm_id(r.iloc[hy_sku_c]) if hy_sku_c is not None else ""
+            name = str(r.iloc[name_c]).strip() if name_c is not None else ""
+            r2_map[pid] = {"承接ID": link_id or pid, "承接SKU": sku, "商品名": name}
+
+    # ── 逐商品对比 ──
+    rows = []
+    all_pids = sorted(set(list(r1_map.keys()) + list(r2_map.keys())))
+    stats = {"total": 0, "id_changed": 0, "sku_changed": 0, "both_changed": 0,
+             "unchanged": 0, "new": 0, "r1_only": 0}
+
+    for pid in all_pids:
+        r1 = r1_map.get(pid)
+        r2 = r2_map.get(pid)
+        if r1 and not r2:
+            stats["r1_only"] += 1
+            continue  # 一轮有、二轮没报名，不列入变化表
+        if r2 and not r1:
+            stats["new"] += 1
+            continue  # 二轮新品，无一轮参照
+        # 两轮都有
+        stats["total"] += 1
+        r1_id = r1["承接ID"]
+        r2_id = r2["承接ID"]
+        r1_sku = r1["承接SKU"]
+        r2_sku = r2["承接SKU"]
+        id_changed = (r1_id != r2_id) if (r1_id and r2_id) else False
+        sku_changed = (r1_sku != r2_sku) if (r1_sku and r2_sku) else False
+        if id_changed:
+            stats["id_changed"] += 1
+        if sku_changed:
+            stats["sku_changed"] += 1
+        if id_changed and sku_changed:
+            stats["both_changed"] += 1
+        if not id_changed and not sku_changed:
+            stats["unchanged"] += 1
+        # 只记录有变化的行（减少噪音）
+        if id_changed or sku_changed:
+            rows.append({
+                "商品ID": pid,
+                "商品名": r2.get("商品名", ""),
+                "一轮承接ID": r1_id,
+                "二轮承接ID": r2_id,
+                "承接ID变化": "⚠️ 已变" if id_changed else "—",
+                "一轮承接SKU": r1_sku,
+                "二轮承接SKU": r2_sku,
+                "承接SKU变化": "⚠️ 已变" if sku_changed else "—",
+            })
+
+    changes_df = pd.DataFrame(rows)
+    return changes_df, stats
 
 
 def detect_dj_columns(df):
@@ -406,6 +512,27 @@ def run_eco_pricing(df_hy, eco_bytes, df_dj=None, params=None, perf_df=None, col
     hy = build_hy_lookups(df_hy, cols.get("hy"))
     rl = build_redline_lookups(df_dj, cols.get("dj"))
 
+    # ── 桥接：二轮承接ID → 商品ID（稳定键）──
+    # 生态表用二轮承接ID，到手价表用一轮承接ID；承接ID若跨轮变化，直接查会漏。
+    # 行业表同行有 商品ID(稳定) + 承接ID(二轮)，建映射让红线兜底能翻译回去。
+    hy_cols_resolved = cols.get("hy") or detect_hy_columns(df_hy)
+    bridge_id = {}   # 二轮承接ID → 商品ID(稳定)
+    bridge_sku = {}  # (二轮承接ID, 二轮承接SKU) → 商品ID(稳定)
+    _b_pid = hy_cols_resolved.get("商品ID")
+    _b_lid = hy_cols_resolved.get("承接ID")
+    _b_sku = hy_cols_resolved.get("承接SKU")
+    if _b_pid is not None:
+        for _, r in df_hy.iterrows():
+            pid = norm_id(r.iloc[_b_pid])
+            lid = norm_id(r.iloc[_b_lid]) if _b_lid is not None else ""
+            sku = norm_id(r.iloc[_b_sku]) if _b_sku is not None else ""
+            if not pid:
+                continue
+            if lid and lid != pid:
+                bridge_id[lid] = pid
+            if lid and sku:
+                bridge_sku[(lid, sku)] = pid
+
     wb = load_workbook(BytesIO(eco_bytes))
     ws = wb.active
 
@@ -430,7 +557,8 @@ def run_eco_pricing(df_hy, eco_bytes, df_dj=None, params=None, perf_df=None, col
 
     preview_rows = []
     stats = {"filled": 0, "multi": 0, "unreg": 0, "over_code": 0, "over_cap": 0,
-             "over_price": 0, "new": 0, "total": 0}
+             "over_price": 0, "new": 0, "total": 0, "dual_hit": 0, "single_hit": 0,
+             "bridge_hit": 0}
 
     for ridx in range(data_start, ws.max_row + 1):
         def _in(key):
@@ -458,9 +586,12 @@ def run_eco_pricing(df_hy, eco_bytes, df_dj=None, params=None, perf_df=None, col
         status = ""
         P = hy["dual_price"].get((eid, esku))
         W = hy["dual_coupon"].get((eid, esku))
-        if P is None and eid in hy["single_price"]:
+        if P is not None:
+            stats["dual_hit"] += 1
+        elif eid in hy["single_price"]:
             P = hy["single_price"][eid]
             W = hy["coupon_single"].get(eid, 0.0)
+            stats["single_hit"] += 1
         if P is None and eid in hy["multi_price"]:
             cands = hy["multi_price"][eid]
             note = "多价待人工，候选价: " + " / ".join(f"${c:g}" for c in cands)
@@ -478,13 +609,23 @@ def run_eco_pricing(df_hy, eco_bytes, df_dj=None, params=None, perf_df=None, col
             continue
 
         W = W or 0.0
-        # 红线
+        # 红线（先直接查，查不到则通过桥接翻译承接ID→商品ID再查）
         V = rl["dual"].get((eid, esku))
         if V is None:
             V = rl["single"].get(eid)
+        bridged = False
+        if V is None and eid in bridge_id:
+            # 承接ID跨轮变化：用稳定商品ID回查一轮到手价
+            stable_pid = bridge_id[eid]
+            V = rl["single"].get(stable_pid)
+            if V is not None:
+                bridged = True
+                stats["bridge_hit"] += 1
         # 券兜底：行业表无券则用到手价表券
         if (W is None or W == 0.0):
             wfb = rl["coupon_dual"].get((eid, esku)) or rl["coupon_single"].get(eid) or 0.0
+            if not wfb and bridged:
+                wfb = rl["coupon_single"].get(bridge_id.get(eid, ""), 0.0)
             W = wfb
 
         # ---- 计算 ----
@@ -541,6 +682,9 @@ def run_eco_pricing(df_hy, eco_bytes, df_dj=None, params=None, perf_df=None, col
             status = "✅ 压价成功"
             fill = None
             stats["filled"] += 1
+
+        if bridged:
+            note = (note + " | " if note else "") + f"承接ID已变(一轮→二轮)，红线经桥接命中(商品ID={bridge_id.get(eid, '')})"
 
         vals = {"P": P, "Q": Q, "R": brand_rate, "S": S, "T": T,
                 "V": V, "W": W, "Z": code, "AA": AA, "AB": AB,
@@ -626,14 +770,14 @@ def _to_buf(wb):
 
 
 def make_hy_template():
-    """行业表精简模板：只含定价必需的 4 列。"""
+    """行业表精简模板：含匹配双键（承接ID+商品ID）与定价必需列。"""
     wb = Workbook()
     ws = wb.active
     ws.title = "行业表模板"
-    ws.append(["承接ID", "承接SKU ID", "报名价", "店铺券金额"])
-    ws.append(["1005012345678901", "12000056789012345", 26.59, 2])
-    ws.append(["1005012345678902", "", 44.91, 0])
-    _style_template(ws, 4)
+    ws.append(["承接ID", "商品ID", "承接SKU ID", "报名价", "店铺券金额"])
+    ws.append(["1005012345678901", "1005012345678901", "12000056789012345", 26.59, 2])
+    ws.append(["1005012756430808", "1005012137815148", "", 44.91, 0])
+    _style_template(ws, 5)
     return _to_buf(wb)
 
 

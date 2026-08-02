@@ -595,7 +595,7 @@ if "二轮" in module_mode:
             st.error(f"❌ 行业表读取失败：{e}")
             st.stop()
         st.session_state.r2_hy_fid = hy_fid
-        for _k in ("r2c_hy_id", "r2c_hy_sku", "r2c_hy_price", "r2c_hy_coupon"):
+        for _k in ("r2c_hy_id", "r2c_hy_pid", "r2c_hy_sku", "r2c_hy_price", "r2c_hy_coupon"):
             st.session_state.pop(_k, None)
     df_hy = st.session_state.r2_hy_df
     hy_det = eco_pricing.detect_hy_columns(df_hy)
@@ -640,11 +640,13 @@ if "二轮" in module_mode:
                      expanded=any(hy_det.get(k) is None for k in ("承接ID", "报名价"))):
         c1, c2 = st.columns(2)
         with c1:
-            hy_id = _col_picker("承接ID（必填·匹配键）", hy_options, hy_det.get("承接ID"), "r2c_hy_id", required=True)
+            hy_id = _col_picker("承接ID（匹配键）", hy_options, hy_det.get("承接ID"), "r2c_hy_id", required=True)
+            hy_pid = _col_picker("商品ID（匹配兜底键）", hy_options, hy_det.get("商品ID"), "r2c_hy_pid")
             hy_price = _col_picker("报名价（必填·→P）", hy_options, hy_det.get("报名价"), "r2c_hy_price", required=True)
         with c2:
             hy_sku = _col_picker("承接SKU（建议·双键匹配）", hy_options, hy_det.get("承接SKU"), "r2c_hy_sku")
             hy_coupon = _col_picker("店铺券（→W）", hy_options, hy_det.get("店铺券"), "r2c_hy_coupon")
+        st.caption("匹配键同时认「承接ID」和「商品ID」：生态表口径每期可能不同，两个都建索引，填哪个都能命中。")
 
     with st.expander(f"② 空白生态表 · {_det_summary(eco_det, ['商品ID'])}",
                      expanded=eco_det.get("商品ID") is None):
@@ -672,7 +674,7 @@ if "二轮" in module_mode:
                 dj_coupon = _col_picker("店铺券（券兜底）", dj_options, dj_det.get("店铺券"), "r2c_dj_coupon")
             st.caption("某行红线价为空时，自动回退读「第一轮到手价」列（系统自动识别，无需选择）。")
 
-    hy_cols = {"承接ID": hy_id, "承接SKU": hy_sku, "报名价": hy_price, "店铺券": hy_coupon}
+    hy_cols = {"承接ID": hy_id, "商品ID": hy_pid, "承接SKU": hy_sku, "报名价": hy_price, "店铺券": hy_coupon}
     eco_cols = {"网红名": eco_kol, "供给类型": eco_supply, "商品ID": eco_pid, "商品名": eco_name,
                 "承接SKU": eco_sku, "SKU": eco_skuname, "数量": eco_qty}
     dj_cols = None
@@ -739,6 +741,46 @@ if "二轮" in module_mode:
         st.warning(f"有 {stats['multi']} 行商品在行业表有多个报名价且生态表无承接SKU，已留空标黄，导出后请人工选价。")
     if stats["unreg"] > 0:
         st.warning(f"有 {stats['unreg']} 行商品在行业表查无报名价（未报名），已标黄。")
+
+    # ── 匹配诊断（让用户确认三张表确实匹配上了）──
+    with st.expander("🔗 匹配诊断（行业表 ↔ 生态表 命中明细）", expanded=False):
+        matched = stats["dual_hit"] + stats["single_hit"]
+        rate = matched / stats["total"] * 100 if stats["total"] else 0
+        d1, d2, d3, d4, d5 = st.columns(5)
+        d1.metric("双键命中（ID+SKU）", stats["dual_hit"])
+        d2.metric("单键兜底（仅ID）", stats["single_hit"])
+        d3.metric("桥接命中（ID跨轮变化）", stats.get("bridge_hit", 0))
+        d4.metric("多价待人工", stats["multi"])
+        d5.metric("未报名/未命中", stats["unreg"])
+        if rate >= 90:
+            msg = f"报名价命中率 {rate:.1f}%（{matched}/{stats['total']}）。匹配正常。"
+            if stats.get("bridge_hit", 0) > 0:
+                msg += f" 其中 {stats['bridge_hit']} 行承接ID跨轮变化，已通过商品ID桥接命中红线。"
+            st.success(msg)
+        elif rate >= 70:
+            st.warning(f"报名价命中率 {rate:.1f}%（{matched}/{stats['total']}），偏低。"
+                       f"请核对上方「行业表」的承接ID/商品ID列是否选对，或本期生态表口径是否变化。")
+        else:
+            st.error(f"报名价命中率仅 {rate:.1f}%（{matched}/{stats['total']}），匹配可能错了！"
+                     f"请到「第一步」核对行业表的承接ID/商品ID/承接SKU 三列对应关系。")
+
+    # ── 承接ID/承接SKU 跨轮变化检测 ──
+    if df_dj is not None:
+        changes_df, change_stats = eco_pricing.detect_id_changes(df_dj, df_hy, dj_cols, hy_cols)
+        if change_stats["id_changed"] > 0 or change_stats["sku_changed"] > 0:
+            with st.expander(f"🔄 承接ID/SKU跨轮变化（一轮→二轮，{len(changes_df)}个品有变化）", expanded=False):
+                c1, c2, c3, c4 = st.columns(4)
+                c1.metric("承接ID有变", change_stats["id_changed"])
+                c2.metric("承接SKU有变", change_stats["sku_changed"])
+                c3.metric("两者都变", change_stats["both_changed"])
+                c4.metric("未变化", change_stats["unchanged"])
+                st.caption(
+                    f"共比对 {change_stats['total']} 个两轮都在的商品。"
+                    f"二轮新品（一轮无）{change_stats['new']} 个，一轮有二轮没报名 {change_stats['r1_only']} 个。"
+                    f"承接ID变化的品已通过「商品ID桥接」自动找回红线，不影响定价。"
+                )
+                if len(changes_df) > 0:
+                    st.dataframe(changes_df, use_container_width=True, hide_index=True)
 
     # ── 预览（完整带颜色 + 筛选）──
     st.markdown("### 📋 定价预览")
