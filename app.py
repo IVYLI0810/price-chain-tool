@@ -518,18 +518,27 @@ if "二轮" in module_mode:
             type=["xlsx", "xls"], key="r2_hy_uploader",
             help="含 承接ID / 承接SKU ID / 810报名价 / 店铺券金额 的表",
         )
+        st.download_button("📋 行业表模板", eco_pricing.make_hy_template(),
+                           file_name="行业表模板.xlsx", key="r2_hy_tpl",
+                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
     with u2:
         eco_file = st.file_uploader(
             "② 空白生态表（待填 P–AE）",
             type=["xlsx", "xls"], key="r2_eco_uploader",
-            help="官方生态表模板，P–AE 列留空，系统自动填",
+            help="官方生态表模板 或 下方精简模板均可，系统自动识别并填 P–AE；表里的「频道名/渠道名/网红名」列会识别出来，可按人筛选结果",
         )
+        st.download_button("📋 生态表模板（精简版）", eco_pricing.make_eco_template(),
+                           file_name="生态表模板.xlsx", key="r2_eco_tpl",
+                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
     with u3:
         dj_file = st.file_uploader(
             "③ 到手价表（红线·可选）",
             type=["xlsx", "xls"], key="r2_dj_uploader",
             help="一轮到手价表，系统读「最终价格」列作红线；不传则全部按新品处理",
         )
+        st.download_button("📋 到手价表模板", eco_pricing.make_dj_template(),
+                           file_name="到手价表模板.xlsx", key="r2_dj_tpl",
+                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
     # ── 过往表现（倾斜钩子·占位）──
     with st.expander("📈 过往商品表现（可选 · 驱动 code 档位倾斜，开发中）", expanded=False):
@@ -549,16 +558,170 @@ if "二轮" in module_mode:
         st.info("👆 请至少上传【①行业表】和【②空白生态表】，系统自动匹配并填好 P–AE 列。③到手价表用于压价红线，建议一起传。")
         st.stop()
 
-    # ── 跑定价 ──
-    try:
-        buf, preview, stats = eco_pricing.run_eco_pricing(
-            hy_file.getvalue(), eco_file.getvalue(),
-            dj_file.getvalue() if dj_file is not None else None,
-            params=r2_params, perf_df=perf_df,
-        )
-    except Exception as e:
-        st.error(f"❌ 处理出错：{e}")
+    # ── 第一步：列识别确认（大文件解析结果缓存到 session_state，避免重复读）──
+    def _fid(f):
+        return f"{f.name}|{f.size}"
+
+    def _col_picker(label, options, detected, key, required=False):
+        """options: [(列值, 展示名)]；detected: 自动识别值作默认。返回选中的列值（None=不使用）。"""
+        vals = [None] + [v for v, _ in options]
+        dmap = dict(options)
+
+        def _fmt(v):
+            if v is None:
+                return "⚠️ 未识别，请手动选择" if required else "（无此列 / 不使用）"
+            return dmap.get(v, str(v))
+
+        idx = vals.index(detected) if detected in vals else 0
+        return st.selectbox(label, vals, index=idx, format_func=_fmt, key=key)
+
+    def _det_summary(det, keys):
+        miss = [k for k in keys if det.get(k) is None]
+        return "✅ 必填列已识别（点开核对）" if not miss else f"⚠️ 未识别：{'、'.join(miss)}"
+
+    st.markdown("---")
+    st.markdown("### 🔍 第一步：核对列识别")
+    st.caption(
+        "系统按表头关键字自动识别各列（与列顺序无关，多余的列自动跳过）。"
+        "请快速核对，识别错的直接在下拉框里改，改完再点「开始计算」。"
+    )
+
+    # ① 行业表
+    hy_fid = _fid(hy_file)
+    if st.session_state.get("r2_hy_fid") != hy_fid:
+        try:
+            st.session_state.r2_hy_df = eco_pricing.read_table(hy_file.getvalue())[0]
+        except Exception as e:
+            st.error(f"❌ 行业表读取失败：{e}")
+            st.stop()
+        st.session_state.r2_hy_fid = hy_fid
+        for _k in ("r2c_hy_id", "r2c_hy_sku", "r2c_hy_price", "r2c_hy_coupon"):
+            st.session_state.pop(_k, None)
+    df_hy = st.session_state.r2_hy_df
+    hy_det = eco_pricing.detect_hy_columns(df_hy)
+    hy_options = [(i, f"第{i + 1}列 · {h}") for i, h in enumerate(eco_pricing.headers_of(df_hy))]
+
+    # ② 生态表（表头流式快读，不加载全表）
+    eco_fid = _fid(eco_file)
+    if st.session_state.get("r2_eco_fid") != eco_fid:
+        try:
+            st.session_state.r2_eco_inspect = eco_pricing.inspect_eco(eco_file.getvalue())
+        except Exception as e:
+            st.error(f"❌ 生态表读取失败：{e}")
+            st.stop()
+        st.session_state.r2_eco_fid = eco_fid
+        for _k in ("r2c_eco_kol", "r2c_eco_supply", "r2c_eco_pid", "r2c_eco_name",
+                   "r2c_eco_sku", "r2c_eco_skuname", "r2c_eco_qty"):
+            st.session_state.pop(_k, None)
+    eco_hr, eco_headers, eco_det = st.session_state.r2_eco_inspect
+    if eco_hr is None:
+        st.error("❌ 生态表里找不到表头行（表头应含「商品ID」或「报名原价」），请检查文件。")
         st.stop()
+    eco_options = [(c, f"第{c}列 · {name}") for c, name in eco_headers]
+
+    # ③ 到手价表（可选）
+    df_dj, dj_det, dj_options = None, {}, []
+    if dj_file is not None:
+        dj_fid = _fid(dj_file)
+        if st.session_state.get("r2_dj_fid") != dj_fid:
+            try:
+                st.session_state.r2_dj_df = eco_pricing.read_table(dj_file.getvalue())[0]
+            except Exception as e:
+                st.error(f"❌ 到手价表读取失败：{e}")
+                st.stop()
+            st.session_state.r2_dj_fid = dj_fid
+            for _k in ("r2c_dj_id", "r2c_dj_sku", "r2c_dj_red", "r2c_dj_coupon"):
+                st.session_state.pop(_k, None)
+        df_dj = st.session_state.r2_dj_df
+        dj_det = eco_pricing.detect_dj_columns(df_dj)
+        dj_options = [(i, f"第{i + 1}列 · {h}") for i, h in enumerate(eco_pricing.headers_of(df_dj))]
+
+    with st.expander(f"① 行业表（报名价+券） · {_det_summary(hy_det, ['承接ID', '报名价'])}",
+                     expanded=any(hy_det.get(k) is None for k in ("承接ID", "报名价"))):
+        c1, c2 = st.columns(2)
+        with c1:
+            hy_id = _col_picker("承接ID（必填·匹配键）", hy_options, hy_det.get("承接ID"), "r2c_hy_id", required=True)
+            hy_price = _col_picker("报名价（必填·→P）", hy_options, hy_det.get("报名价"), "r2c_hy_price", required=True)
+        with c2:
+            hy_sku = _col_picker("承接SKU（建议·双键匹配）", hy_options, hy_det.get("承接SKU"), "r2c_hy_sku")
+            hy_coupon = _col_picker("店铺券（→W）", hy_options, hy_det.get("店铺券"), "r2c_hy_coupon")
+
+    with st.expander(f"② 空白生态表 · {_det_summary(eco_det, ['商品ID'])}",
+                     expanded=eco_det.get("商品ID") is None):
+        c1, c2 = st.columns(2)
+        with c1:
+            eco_kol = _col_picker("网红名/频道名（展示+筛选）", eco_options, eco_det.get("网红名"), "r2c_eco_kol")
+            eco_pid = _col_picker("商品ID（必填·匹配键）", eco_options, eco_det.get("商品ID"), "r2c_eco_pid", required=True)
+            eco_sku = _col_picker("承接SKU ID（建议·双键匹配）", eco_options, eco_det.get("承接SKU"), "r2c_eco_sku")
+            eco_qty = _col_picker("数量（→预算/GMV）", eco_options, eco_det.get("数量"), "r2c_eco_qty")
+        with c2:
+            eco_supply = _col_picker("供给类型（建议·决定阈值）", eco_options, eco_det.get("供给类型"), "r2c_eco_supply")
+            eco_name = _col_picker("商品名（展示）", eco_options, eco_det.get("商品名"), "r2c_eco_name")
+            eco_skuname = _col_picker("SKU名称（展示）", eco_options, eco_det.get("SKU"), "r2c_eco_skuname")
+
+    dj_id = dj_sku = dj_red = dj_coupon = None
+    if dj_file is not None:
+        with st.expander(f"③ 到手价表（红线） · {_det_summary(dj_det, ['商品ID', '红线价'])}",
+                         expanded=any(dj_det.get(k) is None for k in ("商品ID", "红线价"))):
+            c1, c2 = st.columns(2)
+            with c1:
+                dj_id = _col_picker("商品ID（必填·匹配键）", dj_options, dj_det.get("商品ID"), "r2c_dj_id", required=True)
+                dj_red = _col_picker("红线价（必填·最终价格）", dj_options, dj_det.get("红线价"), "r2c_dj_red", required=True)
+            with c2:
+                dj_sku = _col_picker("承接SKU（建议·双键匹配）", dj_options, dj_det.get("承接SKU"), "r2c_dj_sku")
+                dj_coupon = _col_picker("店铺券（券兜底）", dj_options, dj_det.get("店铺券"), "r2c_dj_coupon")
+            st.caption("某行红线价为空时，自动回退读「第一轮到手价」列（系统自动识别，无需选择）。")
+
+    hy_cols = {"承接ID": hy_id, "承接SKU": hy_sku, "报名价": hy_price, "店铺券": hy_coupon}
+    eco_cols = {"网红名": eco_kol, "供给类型": eco_supply, "商品ID": eco_pid, "商品名": eco_name,
+                "承接SKU": eco_sku, "SKU": eco_skuname, "数量": eco_qty}
+    dj_cols = None
+    if dj_file is not None:
+        dj_cols = {"商品ID": dj_id, "承接SKU": dj_sku, "红线价": dj_red, "店铺券": dj_coupon,
+                   "一轮到手价": dj_det.get("一轮到手价")}
+
+    problems = []
+    if hy_id is None:
+        problems.append("行业表·承接ID")
+    if hy_price is None:
+        problems.append("行业表·报名价")
+    if eco_pid is None:
+        problems.append("生态表·商品ID")
+    if dj_file is not None:
+        if dj_id is None:
+            problems.append("到手价表·商品ID")
+        if dj_red is None:
+            problems.append("到手价表·红线价")
+
+    # ── 第二步：计算 ──
+    st.markdown("---")
+    st.markdown("### 🚀 第二步：开始计算")
+    sig = repr((hy_cols, dj_cols, eco_cols, hy_fid, eco_fid,
+                _fid(dj_file) if dj_file is not None else "", r2_params))
+    if problems:
+        st.error(f"⚠️ 还有必填列未选好：{'、'.join(problems)}。请在上方下拉框里选对后再计算。")
+    elif st.button("🚀 确认列对应无误，开始计算", type="primary", key="r2_run_btn"):
+        with st.spinner("正在匹配报名价、倒推 code 并填写生态表（大表约 1 分钟）…"):
+            try:
+                buf, preview, stats = eco_pricing.run_eco_pricing(
+                    df_hy, eco_file.getvalue(), df_dj,
+                    params=r2_params, perf_df=perf_df,
+                    cols={"hy": hy_cols, "dj": dj_cols, "eco": eco_cols},
+                )
+            except Exception as e:
+                st.error(f"❌ 处理出错：{e}")
+                st.stop()
+        buf.seek(0)
+        st.session_state.r2_result = {"buf": buf, "preview": preview, "stats": stats, "sig": sig}
+
+    res = st.session_state.get("r2_result")
+    if res is None:
+        st.info("👆 核对完列对应后，点击「开始计算」。")
+        st.stop()
+    if res.get("sig") != sig:
+        st.warning("⚠️ 列对应或参数已改动，下方结果可能过期——请重新点击「开始计算」。")
+    buf, preview, stats = res["buf"], res["preview"], res["stats"]
+    buf.seek(0)
 
     # ── 概览指标 ──
     st.markdown("---")
@@ -579,9 +742,15 @@ if "二轮" in module_mode:
 
     # ── 预览（完整带颜色 + 筛选）──
     st.markdown("### 📋 定价预览")
+    f1, f2 = st.columns(2)
     status_opts = ["全部"] + sorted(preview["状态"].unique().tolist())
-    sel = st.selectbox("按状态筛选", status_opts, key="r2_status_filter")
+    sel = f1.selectbox("按状态筛选", status_opts, key="r2_status_filter")
     pv = preview if sel == "全部" else preview[preview["状态"] == sel]
+    kol_names = sorted({k for k in preview["网红名"].tolist() if str(k).strip()})
+    if kol_names:
+        kol_sel = f2.selectbox("按网红筛选", ["全部"] + kol_names, key="r2_kol_filter")
+        if kol_sel != "全部":
+            pv = pv[pv["网红名"] == kol_sel]
 
     # 展示用副本：S/AB 存的是小数(0.25=25%)，预览格式不会自动×100，这里手动放大
     pv_show = pv.copy()
