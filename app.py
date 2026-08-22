@@ -32,64 +32,60 @@ st.set_page_config(
 # ─────────────────────────────────────────────
 st.markdown("""
 <style>
-    /* ═══ 统一毛玻璃风主题（与历史数据中枢一致）═══ */
-    .stApp { background: linear-gradient(160deg,#fdf2f8 0%,#f3e8ff 45%,#eef2ff 100%); }
+    /* ═══ Apple 风白底主题（与历史数据中枢一致）═══ */
+    .stApp { background: #f5f5f7; }
 
     h1,h2,h3,h4 {
-        font-family: ui-rounded,'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif;
-        color: #1f2430; font-weight: 800; letter-spacing: -0.01em;
+        font-family: -apple-system,BlinkMacSystemFont,'SF Pro Display','SF Pro Text',
+          'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif;
+        color: #1d1d1f; font-weight: 700; letter-spacing: -0.02em;
     }
     .main-header {
-        font-size: 1.7rem; font-weight: 800; margin-bottom: 0.3rem;
-        color: #1f2430; letter-spacing: 0.5px;
+        font-size: 1.85rem; font-weight: 700; margin-bottom: 0.3rem;
+        color: #1d1d1f; letter-spacing: -0.02em;
     }
     .sub-header {
-        color: #8b8fa3; font-size: 0.9rem; margin-bottom: 1.5rem; font-weight: 600;
+        color: #86868b; font-size: 0.92rem; margin-bottom: 1.5rem; font-weight: 400;
     }
-    /* 侧边栏毛玻璃 */
+    /* 侧边栏 */
     div[data-testid="stSidebar"] {
-        background: rgba(255,255,255,.5); backdrop-filter: blur(10px);
-        border-right: 1px solid rgba(255,255,255,.8);
+        background: #fbfbfd; border-right: 1px solid #e5e5ea;
     }
     footer { visibility: hidden; }
     #MainMenu { visibility: hidden; }
 
-    /* 页签毛玻璃 */
+    /* 页签（分段控件风） */
     .stTabs [data-baseweb="tab-list"] {
-        gap: 6px; background: rgba(255,255,255,.5); padding: 6px; border-radius: 14px;
+        gap: 4px; background: #e8e8ed; padding: 4px; border-radius: 12px;
     }
     .stTabs [data-baseweb="tab"] {
-        border-radius: 10px; padding: 8px 16px; font-weight: 700;
+        border-radius: 9px; padding: 8px 18px; font-weight: 600; color: #515154;
+        background: transparent;
     }
     .stTabs [aria-selected="true"] {
-        background: rgba(244,114,182,.15); color: #1f2430;
+        background: #ffffff; color: #1d1d1f; box-shadow: 0 1px 4px rgba(0,0,0,.12);
     }
 
-    /* 指标卡毛玻璃 */
+    /* 指标卡 */
     div[data-testid="stMetric"] {
-        background: rgba(255,255,255,.6); backdrop-filter: blur(14px);
-        border: 1px solid rgba(255,255,255,.9); border-radius: 14px;
-        padding: 12px; box-shadow: 0 6px 18px rgba(120,90,200,.08);
+        background: #ffffff; border: 1px solid #e5e5ea; border-radius: 14px;
+        padding: 14px; box-shadow: 0 1px 3px rgba(0,0,0,.04);
     }
-    /* 数据框毛玻璃容器 */
+    /* 数据框 */
     div[data-testid="stDataFrame"] {
-        border-radius: 14px; overflow: hidden;
+        background: #ffffff; border: 1px solid #e5e5ea; border-radius: 14px; overflow: hidden;
     }
-    /* 按钮 */
+    /* 按钮（胶囊形） */
     .stButton > button, .stDownloadButton > button {
-        border-radius: 12px; font-weight: 700;
-        border: 1px solid rgba(167,139,250,.5);
-        background: rgba(255,255,255,.7);
-        transition: .18s;
+        border-radius: 980px; font-weight: 500; border: none;
+        background: #0071e3; color: #fff; padding: 6px 18px; transition: .2s;
     }
     .stButton > button:hover, .stDownloadButton > button:hover {
-        background: rgba(244,114,182,.15); border-color: #f472b6;
-        transform: translateY(-1px);
+        background: #0077ed; color: #fff;
     }
     /* 展开器 */
     details[data-testid="stExpander"] {
-        background: rgba(255,255,255,.55); backdrop-filter: blur(10px);
-        border: 1px solid rgba(255,255,255,.85); border-radius: 14px;
+        background: #ffffff; border: 1px solid #e5e5ea; border-radius: 14px;
     }
     /* 输入框 */
     .stTextInput input, .stNumberInput input, .stSelectbox > div > div {
@@ -97,6 +93,7 @@ st.markdown("""
     }
     /* 警告/错误提示 */
     div[data-testid="stAlert"] { border-radius: 12px; }
+    hr { border-color: #e5e5ea; }
 </style>
 """, unsafe_allow_html=True)
 
