@@ -468,6 +468,21 @@ st.markdown('<div class="main-header">💰 价格链路自动化</div>', unsafe_
 st.markdown('<div class="sub-header">网红团购一站式平台 · 模块一：上传商品表 → 自动计算 → 校验 → 导出</div>', unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────
+# 顶层模块切换：价格链路定价 / 历史数据中枢
+# ─────────────────────────────────────────────
+top_module = st.radio(
+    "功能模块",
+    ["💰 价格链路定价", "📊 历史数据中枢"],
+    horizontal=True,
+    label_visibility="collapsed",
+    key="top_module_switch",
+)
+if "历史数据" in top_module:
+    import history_hub
+    history_hub.render()
+    st.stop()
+
+# ─────────────────────────────────────────────
 # 模块切换：一轮定价 / 二轮定价
 # ─────────────────────────────────────────────
 module_mode = st.radio(
