@@ -32,21 +32,71 @@ st.set_page_config(
 # ─────────────────────────────────────────────
 st.markdown("""
 <style>
+    /* ═══ 统一毛玻璃风主题（与历史数据中枢一致）═══ */
+    .stApp { background: linear-gradient(160deg,#fdf2f8 0%,#f3e8ff 45%,#eef2ff 100%); }
+
+    h1,h2,h3,h4 {
+        font-family: ui-rounded,'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif;
+        color: #1f2430; font-weight: 800; letter-spacing: -0.01em;
+    }
     .main-header {
-        font-size: 1.6rem;
-        font-weight: 700;
-        margin-bottom: 0.2rem;
+        font-size: 1.7rem; font-weight: 800; margin-bottom: 0.3rem;
+        color: #1f2430; letter-spacing: 0.5px;
     }
     .sub-header {
-        color: #666;
-        font-size: 0.9rem;
-        margin-bottom: 1.5rem;
+        color: #8b8fa3; font-size: 0.9rem; margin-bottom: 1.5rem; font-weight: 600;
     }
+    /* 侧边栏毛玻璃 */
     div[data-testid="stSidebar"] {
-        background: #fafbfc;
+        background: rgba(255,255,255,.5); backdrop-filter: blur(10px);
+        border-right: 1px solid rgba(255,255,255,.8);
     }
     footer { visibility: hidden; }
     #MainMenu { visibility: hidden; }
+
+    /* 页签毛玻璃 */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 6px; background: rgba(255,255,255,.5); padding: 6px; border-radius: 14px;
+    }
+    .stTabs [data-baseweb="tab"] {
+        border-radius: 10px; padding: 8px 16px; font-weight: 700;
+    }
+    .stTabs [aria-selected="true"] {
+        background: rgba(244,114,182,.15); color: #1f2430;
+    }
+
+    /* 指标卡毛玻璃 */
+    div[data-testid="stMetric"] {
+        background: rgba(255,255,255,.6); backdrop-filter: blur(14px);
+        border: 1px solid rgba(255,255,255,.9); border-radius: 14px;
+        padding: 12px; box-shadow: 0 6px 18px rgba(120,90,200,.08);
+    }
+    /* 数据框毛玻璃容器 */
+    div[data-testid="stDataFrame"] {
+        border-radius: 14px; overflow: hidden;
+    }
+    /* 按钮 */
+    .stButton > button, .stDownloadButton > button {
+        border-radius: 12px; font-weight: 700;
+        border: 1px solid rgba(167,139,250,.5);
+        background: rgba(255,255,255,.7);
+        transition: .18s;
+    }
+    .stButton > button:hover, .stDownloadButton > button:hover {
+        background: rgba(244,114,182,.15); border-color: #f472b6;
+        transform: translateY(-1px);
+    }
+    /* 展开器 */
+    details[data-testid="stExpander"] {
+        background: rgba(255,255,255,.55); backdrop-filter: blur(10px);
+        border: 1px solid rgba(255,255,255,.85); border-radius: 14px;
+    }
+    /* 输入框 */
+    .stTextInput input, .stNumberInput input, .stSelectbox > div > div {
+        border-radius: 10px;
+    }
+    /* 警告/错误提示 */
+    div[data-testid="stAlert"] { border-radius: 12px; }
 </style>
 """, unsafe_allow_html=True)
 
