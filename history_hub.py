@@ -29,8 +29,10 @@ def inject_css():
     .kpi{background:#f0fdf7;border:4px solid #1c1c1e;border-radius:10px;
       box-shadow:4px 4px 0 #1c1c1e;padding:20px;height:100%;}
     .kpi .k{font-size:13px;color:#4c8a6b;font-weight:800;margin-bottom:8px;}
-    .kpi .v{font-size:28px;font-weight:400;color:#14724a;line-height:1.15;letter-spacing:1px;
-      font-family:'ZCOOL QingKe HuangYou','PingFang SC',sans-serif;}
+    /* 大数字用易读粗黑体（装饰像素字体数字难认），像素字只留给标题 */
+    .kpi .v{font-size:30px;font-weight:800;color:#14724a;line-height:1.15;letter-spacing:0;
+      font-family:-apple-system,'PingFang SC','Microsoft YaHei',sans-serif;
+      font-variant-numeric:tabular-nums;}
     .kpi .d{font-size:12px;margin-top:8px;font-weight:800;}
     .kpi .hint{font-size:12px;color:#7aa88f;margin-top:8px;line-height:1.5;font-weight:600;}
     .up{color:#14724a;} .down{color:#d70015;}

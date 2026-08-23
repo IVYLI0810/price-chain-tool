@@ -336,9 +336,12 @@ st.markdown("""
         box-shadow: 4px 4px 0 #1c1c1e;
     }
     div[data-testid="stMetricLabel"] { color: #4c8a6b; font-weight: 700; }
+    /* 指标大数字：用易读的粗黑体，不用装饰像素字体（数字笔画花，久看费劲） */
     div[data-testid="stMetricValue"] {
         color: #14724a;
-        font-family: 'ZCOOL QingKe HuangYou', 'PingFang SC', sans-serif;
+        font-family: -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+        font-weight: 800;
+        letter-spacing: 0;
     }
 
     /* ---------- 数据表 ---------- */
