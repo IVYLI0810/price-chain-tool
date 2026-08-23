@@ -21,415 +21,597 @@ import eco_pricing  # 二轮定价·生态表批量定价 核心逻辑
 # 页面配置
 # ─────────────────────────────────────────────
 st.set_page_config(
-    page_title="价格链路管控 | 网红团购平台",
+    page_title="价格力管控 | 网红团购平台",
     page_icon="💰",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
 # ─────────────────────────────────────────────
-# 自定义样式（与 KOL Finder 统一：卡通像素风 · 粉底 · 黑描边 · 硬阴影）
+# 自定义样式（naver-price-tool 同款：薄荷绿 · 游戏像素 · 黑描边 · 硬阴影）
 # ─────────────────────────────────────────────
 st.markdown("""
 <style>
-    /* ---------- 全局底色：纯色粉（卡通像素风 · 无毛玻璃无渐变） ---------- */
+    @import url('https://cdn.jsdelivr.net/npm/@fontsource/press-start-2p@5.3.0/index.css');
+    @import url('https://cdn.jsdelivr.net/npm/@fontsource/zcool-qingke-huangyou@5.2.6/index.css');
+
+    /* ---------- 全局：薄荷绿棋盘格底色 ---------- */
     .stApp {
-        background: #f5a3b8;
+        font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif;
+        background-color: #9defc4;
+        background-image:
+            linear-gradient(45deg, #8fe6b8 25%, transparent 25%, transparent 75%, #8fe6b8 75%),
+            linear-gradient(45deg, #8fe6b8 25%, transparent 25%, transparent 75%, #8fe6b8 75%);
+        background-size: 32px 32px;
+        background-position: 0 0, 16px 16px;
         background-attachment: fixed;
     }
     footer { visibility: hidden; }
     #MainMenu { visibility: hidden; }
+    header[data-testid="stHeader"] { background: transparent; }
 
-    /* ---------- 弹窗遮罩：周围变暗的经典 popup 效果 ---------- */
-    .stDialog {
-        background: rgba(28, 28, 30, 0.55) !important;
-    }
+    .block-container { padding-top: 2.5rem; max-width: 1150px; }
 
     h1, h2, h3, h4 {
-        font-family: ui-rounded, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', -apple-system, sans-serif;
-        color: #1c1c1e; font-weight: 800; letter-spacing: -0.01em;
-    }
-    p, span, div, label, td, th, a, li {
-        font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Inter', 'PingFang SC', sans-serif;
+        font-family: 'ZCOOL QingKe HuangYou', 'PingFang SC', sans-serif;
+        color: #1c1c1e; letter-spacing: 1px;
     }
 
-    /* ---------- 顶部 hero：黑圆标 + 黄投影标题（卡通像素风） ---------- */
-    .app-hero { text-align: center; padding: 14px 0 6px; position: relative; }
-    .app-hero .hero-logo {
-        width: 96px; height: 96px; margin: 0 auto 18px; border-radius: 50%;
-        background: #1c1c1e; color: #f5c542; display: flex; align-items: center; justify-content: center;
-        font-size: 40px; border: 5px solid #1c1c1e; box-shadow: 6px 6px 0 rgba(28,28,30,.3);
-    }
-    .app-hero .hero-title {
-        font-size: 44px; font-weight: 800; color: #1c1c1e; margin: 0 0 10px;
-        font-family: ui-rounded, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', -apple-system, sans-serif;
-        letter-spacing: 1px; text-shadow: 4px 4px 0 #f5c542;
-    }
-    .app-hero .hero-sub { font-size: 16px; color: #a05c74; font-weight: 700; margin: 0; }
-    /* 星星：紫+黄 · 随机闪烁 */
-    .app-hero .hero-star { position: absolute; font-size: 24px; animation: twinkle 2.6s ease-in-out infinite; }
-    .app-hero .hero-star-l { left: 20%; top: 20px; color: #8674d6; animation-delay: 0s; animation-duration: 2.2s; }
-    .app-hero .hero-star-r { right: 20%; top: 20px; color: #f5c542; animation-delay: .8s; animation-duration: 3.1s; }
-    .app-hero .hero-star-2 { left: 28%; top: 92px; color: #f5c542; font-size: 16px; animation-delay: 1.4s; animation-duration: 2.7s; }
-    .app-hero .hero-star-3 { right: 28%; top: 96px; color: #8674d6; font-size: 17px; animation-delay: .4s; animation-duration: 3.4s; }
-    .app-hero .hero-star-4 { left: 14%; top: 68px; color: #8674d6; font-size: 15px; animation-delay: 1.9s; animation-duration: 2.4s; }
-    .app-hero .hero-star-5 { right: 13%; top: 62px; color: #f5c542; font-size: 14px; animation-delay: 1.1s; animation-duration: 2.9s; }
-    @keyframes twinkle {
-        0%, 100% { opacity: .2; transform: scale(.75) rotate(-10deg); }
-        50% { opacity: 1; transform: scale(1.2) rotate(10deg); }
-    }
-
-    /* ---------- 侧边栏：纯浅粉 + 粗黑右边框（无毛玻璃） ---------- */
-    section[data-testid="stSidebar"] {
-        background-color: #ffd9e3;
+    /* ---------- 侧边栏 ---------- */
+    [data-testid="stSidebar"] {
+        background-color: #d8fbe9;
         border-right: 4px solid #1c1c1e;
     }
-
-    /* ---------- 按钮：黑色胶囊 + 黑描边 + 硬阴影（卡通像素风）
-       注意：1.60 里 button 被 tooltip span 包了三层，不是 .stButton 直接子元素，
-       必须用后代选择器（空格），用 > 会完全匹配不到！ ---------- */
-    .stButton button, .stDownloadButton button {
-        border-radius: 999px !important; height: 44px; padding: 0 26px;
-        font-weight: 800; font-family: ui-rounded, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', -apple-system, sans-serif;
-        border: 3px solid #1c1c1e !important;
+    [data-testid="stSidebar"] label {
+        font-family: 'ZCOOL QingKe HuangYou', 'PingFang SC', sans-serif;
+        font-size: 15px !important;
+        color: #1c1c1e !important;
+    }
+    [data-testid="stSidebar"] hr {
+        border: none !important;
+        border-top: 3px dashed #9fd8bc !important;
+        margin: 18px 0 !important;
+    }
+    [data-testid="stSidebar"] .stButton button {
         background: #1c1c1e !important;
-        color: #fff !important;
-        box-shadow: 4px 4px 0 rgba(28,28,30,.35);
-        transition: all .12s;
-        display: inline-flex; align-items: center; justify-content: center;
+        color: #9defc4 !important;
+        box-shadow: 0 6px 0 #4a4a4e !important;
+        font-size: 16px !important;
+        height: 46px !important;
+        min-height: 46px !important;
     }
-    .stButton button p, .stDownloadButton button p { margin: 0; color: inherit; }
-    .stButton button:hover, .stDownloadButton button:hover {
-        background: #33333a !important; color: #fff !important;
-        box-shadow: 4px 4px 0 rgba(28,28,30,.35);
-    }
-    .stButton button:active, .stDownloadButton button:active {
-        transform: translate(3px,3px); box-shadow: none !important;
-    }
-    /* ---------- 图标按钮：白底圆形 + 黑描边 + 硬阴影 ---------- */
-    .stButton button[data-testid="stBaseButton-primary"] {
-        width: 44px !important; height: 44px !important; padding: 0 !important;
-        border-radius: 50% !important;
-        background: #fff !important;
-        color: #1c1c1e !important; border: 3px solid #1c1c1e !important;
-        box-shadow: 3px 3px 0 #1c1c1e;
-    }
-    .stButton button[data-testid="stBaseButton-primary"]:hover {
-        background: #ffd9e3 !important; color: #1c1c1e !important;
-        box-shadow: 3px 3px 0 #1c1c1e;
-    }
-    .stButton button[data-testid="stBaseButton-primary"]:active {
-        transform: translate(2px,2px); box-shadow: none !important;
+    [data-testid="stSidebar"] .stButton button:hover { filter: brightness(1.25); }
+    [data-testid="stSidebar"] .stButton button:active {
+        transform: translateY(6px) !important;
+        box-shadow: 0 0 0 transparent !important;
     }
 
-    /* ---------- 模块/轮次切换按钮组：黑底=选中 · 白底=未选中 ----------
-       原理同 KOL Finder 关键词分组：容器内第一个元素是隐藏的 marker，
-       用 :has() 选中"直接子级含该标记"的容器，不会误伤其他按钮。 ---------- */
+    /* ---------- 标题横幅（游戏机顶栏） ---------- */
+    .title-bar {
+        background: #1c1c1e;
+        border: 4px solid #1c1c1e;
+        border-radius: 12px;
+        box-shadow: 8px 8px 0 rgba(20, 114, 74, .35);
+        padding: 18px 26px;
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        flex-wrap: wrap;
+    }
+    .coin { font-size: 26px; display: inline-block; animation: px-bounce .7s steps(2, jump-none) infinite alternate; }
+    .title-en {
+        font-family: 'Press Start 2P', monospace;
+        font-size: 20px;
+        color: #9defc4;
+        text-shadow: 3px 3px 0 #14724a;
+    }
+    .title-cn {
+        font-family: 'ZCOOL QingKe HuangYou', 'PingFang SC', sans-serif;
+        font-size: 26px;
+        color: #fff;
+        letter-spacing: 4px;
+    }
+    .cursor-blink {
+        font-family: 'Press Start 2P', monospace;
+        color: #ffd93d;
+        font-size: 18px;
+        animation: px-blink 1s steps(1) infinite;
+    }
+    .subtitle { font-size: 14px; color: #2c6e4f; font-weight: 600; margin-top: 14px; margin-bottom: 0; }
+    .home-hero { justify-content: center; padding: 30px 26px; }
+    .home-hero .coin { font-size: 34px; }
+    .home-hero .title-en { font-size: 26px; }
+    .home-hero .title-cn { font-size: 34px; }
+    .home-hint { text-align: center; font-size: 15px; margin-top: 20px; }
+    @keyframes px-bounce { from { transform: translateY(0); } to { transform: translateY(-7px); } }
+    @keyframes px-blink { 50% { opacity: 0; } }
+
+    /* ---------- 首页模块卡：整卡可点（透明按钮覆盖整卡） ---------- */
+    .homecard-marker { display: none; }
+    [data-testid="stVerticalBlock"]:has(> .element-container:first-child .homecard-marker) {
+        background: #fff;
+        border: 4px solid #1c1c1e;
+        border-radius: 8px;
+        box-shadow: 8px 8px 0 #1c1c1e;
+        padding: 32px 30px;
+        min-height: 330px;
+        position: relative;
+        cursor: pointer;
+        transition: transform .1s, box-shadow .1s;
+    }
+    [data-testid="stVerticalBlock"]:has(> .element-container:first-child .homecard-marker):hover {
+        transform: translate(-3px, -3px);
+        box-shadow: 11px 11px 0 #1c1c1e;
+    }
+    [data-testid="stVerticalBlock"]:has(> .element-container:first-child .homecard-marker) > .element-container {
+        margin: 0 !important;
+    }
+    [data-testid="stVerticalBlock"]:has(> .element-container:first-child .homecard-marker) .stButton {
+        margin: 0 !important;
+    }
+    [data-testid="stVerticalBlock"]:has(> .element-container:first-child .homecard-marker) .stButton button {
+        position: absolute;
+        inset: 0;
+        opacity: 0;
+        z-index: 6;
+        border-radius: 8px;
+    }
+    .hc-icon {
+        width: 78px; height: 78px;
+        border-radius: 14px;
+        background: #1c1c1e;
+        display: flex; align-items: center; justify-content: center;
+        font-size: 38px;
+        box-shadow: 4px 4px 0 rgba(20, 114, 74, .35);
+        margin-bottom: 18px;
+    }
+    .hc-title {
+        font-family: 'ZCOOL QingKe HuangYou', 'PingFang SC', sans-serif;
+        font-size: 25px;
+        letter-spacing: 2px;
+        color: #1c1c1e;
+        margin-bottom: 10px;
+    }
+    .hc-desc {
+        font-size: 13px;
+        color: #4c8a6b;
+        line-height: 1.9;
+        font-weight: 600;
+        margin-bottom: 20px;
+    }
+    .hc-enter {
+        display: inline-flex;
+        align-items: center;
+        font-family: 'ZCOOL QingKe HuangYou', 'PingFang SC', sans-serif;
+        font-size: 18px;
+        letter-spacing: 3px;
+        color: #fff;
+        background: #2fbf7f;
+        border: 4px solid #1c1c1e;
+        border-radius: 12px;
+        padding: 8px 30px;
+        box-shadow: 0 5px 0 #14724a;
+    }
+
+    /* ---------- 返回首页按钮（小号白键帽） ---------- */
+    .backbtn-marker { display: none; }
+    [data-testid="stVerticalBlock"]:has(> .element-container:first-child .backbtn-marker) > .element-container {
+        margin: 0 !important;
+    }
+    [data-testid="stVerticalBlock"]:has(> .element-container:first-child .backbtn-marker) .stButton button {
+        height: 42px !important;
+        min-height: 42px !important;
+        font-size: 15px !important;
+        letter-spacing: 1px;
+        padding: 0 20px !important;
+        border-radius: 10px !important;
+        background: #fff !important;
+        color: #1c1c1e !important;
+        box-shadow: 0 4px 0 #9dbfae !important;
+        width: auto;
+        display: inline-flex;
+        align-items: center;
+    }
+    [data-testid="stVerticalBlock"]:has(> .element-container:first-child .backbtn-marker) .stButton button:hover {
+        background: #d8fbe9 !important;
+    }
+    [data-testid="stVerticalBlock"]:has(> .element-container:first-child .backbtn-marker) .stButton button:active {
+        transform: translateY(4px) !important;
+        box-shadow: 0 0 0 transparent !important;
+    }
+
+    /* ---------- 轮次切换按钮组：绿键帽=选中 · 白键帽=未选中 ----------
+       注意：1.60 里 button 被 tooltip span 包了几层，必须用后代选择器！ ---------- */
     .modswitch-marker { display: none; }
     [data-testid="stVerticalBlock"]:has(> .element-container .modswitch-marker) .stButton button {
-        width: 100% !important; height: 46px !important; min-height: 46px !important;
-        border-radius: 999px !important; padding: 0 10px !important;
+        width: 100% !important;
+        height: 52px !important;
+        min-height: 52px !important;
+        border-radius: 14px !important;
     }
     [data-testid="stVerticalBlock"]:has(> .element-container .modswitch-marker) .stButton button[data-testid="stBaseButton-primary"] {
-        width: 100% !important; height: 46px !important; min-height: 46px !important;
-        border-radius: 999px !important; padding: 0 10px !important;
-        background: #1c1c1e !important; color: #fff !important;
-        box-shadow: 4px 4px 0 rgba(28,28,30,.35);
+        background: #2fbf7f !important;
+        color: #fff !important;
+        box-shadow: 0 6px 0 #14724a !important;
     }
     [data-testid="stVerticalBlock"]:has(> .element-container .modswitch-marker) .stButton button:not([data-testid="stBaseButton-primary"]) {
-        background: #fff !important; color: #1c1c1e !important;
+        background: #fff !important;
+        color: #1c1c1e !important;
+        box-shadow: 0 6px 0 #9dbfae !important;
     }
     [data-testid="stVerticalBlock"]:has(> .element-container .modswitch-marker) .stButton button:not([data-testid="stBaseButton-primary"]):hover {
-        background: #ffd9e3 !important; color: #1c1c1e !important;
+        background: #d8fbe9 !important;
     }
 
-    /* ---------- Tabs：均分胶囊 · 白底=未选中 · 黑底=选中 · 黑描边+硬阴影 ---------- */
+    /* ---------- 游戏机键帽按钮（全局） ---------- */
+    .stButton button, [data-testid="stDownloadButton"] button {
+        font-family: 'ZCOOL QingKe HuangYou', 'PingFang SC', sans-serif !important;
+        font-size: 18px !important;
+        letter-spacing: 3px;
+        border: 4px solid #1c1c1e !important;
+        border-radius: 14px !important;
+        height: 52px !important;
+        min-height: 52px !important;
+        transition: transform .06s, box-shadow .06s, filter .15s;
+    }
+    .stButton button p, [data-testid="stDownloadButton"] button p {
+        color: inherit !important;
+        font-family: inherit !important;
+    }
+    button[data-testid="stBaseButton-primary"] {
+        background: #2fbf7f !important;
+        color: #fff !important;
+        box-shadow: 0 6px 0 #14724a !important;
+    }
+    button[data-testid="stBaseButton-primary"]:hover { filter: brightness(1.06); }
+    button[data-testid="stBaseButton-primary"]:active {
+        transform: translateY(6px) !important;
+        box-shadow: 0 0 0 transparent !important;
+    }
+    button[data-testid="stBaseButton-secondary"] {
+        background: #fff !important;
+        color: #1c1c1e !important;
+        box-shadow: 0 6px 0 #9dbfae !important;
+    }
+    button[data-testid="stBaseButton-secondary"]:hover { background: #d8fbe9 !important; }
+    button[data-testid="stBaseButton-secondary"]:active {
+        transform: translateY(6px) !important;
+        box-shadow: 0 0 0 transparent !important;
+    }
+    [data-testid="stDownloadButton"] button {
+        background: #ffd93d !important;
+        color: #1c1c1e !important;
+        box-shadow: 0 6px 0 #b8930a !important;
+    }
+    [data-testid="stDownloadButton"] button:hover { filter: brightness(1.05); }
+    [data-testid="stDownloadButton"] button:active {
+        transform: translateY(6px) !important;
+        box-shadow: 0 0 0 transparent !important;
+    }
+
+    /* ---------- Tabs：白键帽=未选中 · 黑键帽=选中 ---------- */
     .stTabs [role="tablist"] {
-        gap: 12px; border-bottom: none;
-        background: transparent; padding: 0;
+        gap: 12px;
+        border-bottom: none;
+        background: transparent;
+        padding: 0;
         display: flex;
     }
     .stTabs [role="tab"] {
         flex: 1;
-        border-radius: 999px !important; padding: 11px 0 !important;
-        font-weight: 800; font-family: ui-rounded, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', -apple-system, sans-serif;
+        border-radius: 12px !important;
+        padding: 12px 0 !important;
+        font-family: 'ZCOOL QingKe HuangYou', 'PingFang SC', sans-serif;
+        font-size: 16px;
+        letter-spacing: 2px;
         background: #fff !important;
-        color: #1c1c1e !important; border: 3px solid #1c1c1e !important;
+        color: #1c1c1e !important;
+        border: 4px solid #1c1c1e !important;
         justify-content: center;
         box-shadow: 4px 4px 0 #1c1c1e;
         transition: all .12s;
     }
-    .stTabs [role="tab"]:hover { background: #ffd9e3 !important; color: #1c1c1e !important; }
+    .stTabs [role="tab"]:hover { background: #d8fbe9 !important; color: #1c1c1e !important; }
     .stTabs [role="tab"][aria-selected="true"] {
         background: #1c1c1e !important;
-        color: #ffffff !important;
-        box-shadow: 4px 4px 0 rgba(28,28,30,.35);
+        color: #9defc4 !important;
+        box-shadow: 4px 4px 0 rgba(20, 114, 74, .35);
     }
     .stTabs [role="tab"] p { color: inherit; }
     /* 隐藏默认下划线指示器（1.60 新结构） */
     .stTabs .react-aria-SelectionIndicator { display: none !important; }
 
-    /* ---------- 指标卡：纯色 + 黑描边 + 硬阴影 ---------- */
+    /* ---------- 指标卡 ---------- */
     div[data-testid="stMetric"] {
-        background: #fffdf7;
-        border: 3px solid #1c1c1e; border-radius: 14px; padding: 16px 20px;
+        background: #f0fdf7;
+        border: 4px solid #1c1c1e;
+        border-radius: 10px;
+        padding: 16px 20px;
         box-shadow: 4px 4px 0 #1c1c1e;
     }
-    div[data-testid="stMetricLabel"] { color: #a05c74; font-weight: 700; }
+    div[data-testid="stMetricLabel"] { color: #4c8a6b; font-weight: 700; }
     div[data-testid="stMetricValue"] {
-        color: #1c1c1e; font-weight: 800;
-        font-family: ui-rounded, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', -apple-system, sans-serif;
+        color: #14724a;
+        font-family: 'ZCOOL QingKe HuangYou', 'PingFang SC', sans-serif;
     }
 
-    /* ---------- 数据表：白底 + 黑描边 + 硬阴影 ---------- */
+    /* ---------- 数据表 ---------- */
     div[data-testid="stDataFrame"] {
-        background: #fff; border: 3px solid #1c1c1e; border-radius: 14px;
-        overflow: hidden; box-shadow: 4px 4px 0 rgba(28,28,30,.25);
+        background: #fff;
+        border: 4px solid #1c1c1e;
+        border-radius: 8px;
+        overflow: hidden;
+        box-shadow: 4px 4px 0 rgba(28, 28, 30, .2);
     }
 
-    /* ---------- 上传框：奶油底 + 黑描边 + 硬阴影（1.60 外层是 div 不是 section） ---------- */
-    [data-testid="stFileUploader"] [data-testid="stFileUploaderDropzone"] {
-        background: #fffdf7 !important; border: 3px solid #1c1c1e !important; border-radius: 14px;
-        box-shadow: 4px 4px 0 rgba(28,28,30,.25);
+    /* ---------- 上传框（1.60 外层是 div 不是 section） ---------- */
+    [data-testid="stFileUploader"] > div {
+        border: 4px dashed #1c1c1e !important;
+        border-radius: 10px !important;
+        background: #f0fdf7 !important;
     }
-    [data-testid="stFileUploader"] [data-testid="stFileUploaderSectionHeader"] p {
-        color: #1c1c1e; font-weight: 800;
-    }
-    [data-testid="stFileUploader"] div[data-testid="stFileUploaderDropzone"] p {
-        color: #a05c74; font-weight: 700;
-    }
-    [data-testid="stFileUploader"] button[data-testid="stBaseButton-secondary"] {
-        border-radius: 999px !important; border: 3px solid #1c1c1e !important;
-        background: #1c1c1e !important; color: #fff !important; font-weight: 800;
-        box-shadow: 3px 3px 0 rgba(28,28,30,.35);
-    }
-    [data-testid="stFileUploader"] button[data-testid="stBaseButton-secondary"]:hover {
-        background: #33333a !important; color: #fff !important;
+    [data-testid="stFileUploader"] button {
+        font-family: 'ZCOOL QingKe HuangYou', 'PingFang SC', sans-serif !important;
+        border: 3px solid #1c1c1e !important;
+        border-radius: 10px !important;
+        background: #fff !important;
+        color: #1c1c1e !important;
+        box-shadow: 0 4px 0 #9dbfae !important;
     }
 
-    /* ---------- 输入框/数字框：白底 + 黑描边 + 硬阴影 ---------- */
+    /* ---------- 输入框 / 数字框 ---------- */
     .stTextInput input, .stNumberInput input {
-        border-radius: 12px !important; height: 44px;
-        border: 3px solid #1c1c1e !important; background: #fff !important;
-        box-shadow: 3px 3px 0 #1c1c1e; font-weight: 700;
-    }
-    .stTextArea textarea {
-        border-radius: 14px !important;
-        border: 3px solid #1c1c1e !important; background: #fff !important;
-        box-shadow: 3px 3px 0 #1c1c1e;
+        border: 4px solid #1c1c1e !important;
+        border-radius: 10px !important;
+        background: #fff !important;
+        height: 44px;
+        font-weight: 700;
     }
     .stTextInput input:focus, .stNumberInput input:focus, .stTextArea textarea:focus {
-        border-color: #8674d6 !important; box-shadow: 3px 3px 0 #8674d6;
+        border-color: #2fbf7f !important;
+        box-shadow: 4px 4px 0 #2fbf7f !important;
     }
-    /* 数字框：隐藏 −/+ 按钮（1.60 改名为 stNumberInputStepUp/Down） */
+    .stTextArea textarea {
+        border: 4px solid #1c1c1e !important;
+        border-radius: 10px !important;
+        background: #fff !important;
+    }
+    /* 数字框：隐藏 −/+ 按钮（1.60 改名 stNumberInputStepUp/Down） */
     [data-testid="stNumberInputStepUp"], [data-testid="stNumberInputStepDown"] {
         display: none !important;
     }
     .stNumberInput input { padding-right: 20px !important; }
-    /* ---------- 密码框（Naver Secret）：描边挪到外层容器，眼睛图标圈进同一胶囊 ---------- */
+    /* 密码框（Naver Secret）：描边挪到外层容器 */
     [data-testid="stTextInputRootElement"]:has(input[type="password"]) {
-        border: 3px solid #1c1c1e !important; border-radius: 12px !important;
-        background: #fff !important; box-shadow: 3px 3px 0 #1c1c1e;
-        height: 44px; align-items: center;
+        border: 4px solid #1c1c1e !important;
+        border-radius: 10px !important;
+        background: #fff !important;
+        height: 44px;
+        align-items: center;
     }
     [data-testid="stTextInputRootElement"]:has(input[type="password"]) input {
-        border: none !important; box-shadow: none !important;
-        background: transparent !important; border-radius: 0 !important;
+        border: none !important;
+        box-shadow: none !important;
+        background: transparent !important;
+        border-radius: 0 !important;
         height: 38px !important;
     }
     [data-testid="stTextInputRootElement"]:has(input[type="password"]):focus-within {
-        border-color: #8674d6 !important; box-shadow: 3px 3px 0 #8674d6;
+        border-color: #2fbf7f !important;
+        box-shadow: 4px 4px 0 #2fbf7f !important;
     }
-    /* ---------- 下拉框/多选框：白底 + 黑描边 + 硬阴影（1.60 React Aria 结构） ---------- */
+
+    /* ---------- 下拉框 / 多选框（1.60 React Aria 结构） ---------- */
     [data-testid="stSelectbox"] [role="group"],
     [data-testid="stMultiSelect"] [role="group"],
     div[data-baseweb="select"] > div {
-        border-radius: 12px !important; min-height: 44px;
-        border: 3px solid #1c1c1e !important; background: #fff !important;
-        box-shadow: 3px 3px 0 #1c1c1e; font-weight: 700;
+        border-radius: 10px !important;
+        min-height: 44px;
+        border: 4px solid #1c1c1e !important;
+        background: #fff !important;
+        font-weight: 700;
     }
-    div[data-baseweb="popover"] > ul { border-radius: 14px; border: 3px solid #1c1c1e; }
+    div[data-baseweb="popover"] > ul {
+        border-radius: 10px;
+        border: 3px solid #1c1c1e;
+    }
 
-    /* ---------- 提示条 / 展开器：黑描边 + 硬阴影 ---------- */
+    /* ---------- 提示条 / 展开器 ---------- */
     div[data-testid="stAlert"], .stAlert {
-        border-radius: 14px !important; border: 3px solid #1c1c1e !important;
-        box-shadow: 4px 4px 0 rgba(28,28,30,.25);
+        border-radius: 10px !important;
+        border: 3px solid #1c1c1e !important;
+        box-shadow: 4px 4px 0 rgba(20, 114, 74, .25);
     }
-    /* 1.60: stExpander 的 testid 从 <details> 挪到外层 <div>，选择器不限定标签 */
     [data-testid="stExpander"] {
-        border-radius: 14px !important; border: 3px solid #1c1c1e !important;
-        background: #fffdf7 !important; box-shadow: 4px 4px 0 rgba(28,28,30,.25);
+        border-radius: 8px !important;
+        border: 3px solid #1c1c1e !important;
+        background: #f0fdf7 !important;
+    }
+    [data-testid="stExpander"] summary {
+        font-family: 'ZCOOL QingKe HuangYou', 'PingFang SC', sans-serif;
+        font-size: 15px;
     }
     pre {
-        border-radius: 12px !important; border: 3px solid #1c1c1e !important;
-        background: #ffd9e3 !important;
+        border-radius: 8px !important;
+        border: 3px solid #1c1c1e !important;
+        background: #d8fbe9 !important;
     }
 
-    /* ---------- 进度条：黑描边胶囊 ---------- */
-    [data-testid="stProgressBar"] {
-        border: 2px solid #1c1c1e; border-radius: 999px; overflow: hidden;
-        background: #fff;
+    /* ---------- 进度条（XP 条纹） ---------- */
+    [data-testid="stProgress"] .react-aria-ProgressBar {
+        border: 4px solid #1c1c1e;
+        border-radius: 10px;
+        background: #e8fff3;
+        height: 36px;
+        padding: 3px;
     }
+    [data-testid="stProgress"] .react-aria-ProgressBar > div:last-child {
+        background: repeating-linear-gradient(45deg, #2fbf7f 0 12px, #26a86e 12px 24px) !important;
+        border-radius: 5px;
+        animation: px-stripes .8s linear infinite;
+    }
+    @keyframes px-stripes { to { background-position: 34px 0; } }
 
-    hr { border-color: #1c1c1e; border-width: 2px; }
+    hr { border: none; border-top: 3px dashed #9fd8bc; }
 </style>
 """, unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────
 # 侧边栏：全局参数配置
 # ─────────────────────────────────────────────
-with st.sidebar:
-    st.markdown("### ⚙️ 全局参数")
-    st.caption("规则暂定，可随时调整")
+if st.session_state.get("page", "home") == "make":  # 侧边栏只在制作页显示
+    with st.sidebar:
+        st.markdown("### ⚙️ 全局参数")
+        st.caption("规则暂定，可随时调整")
 
-    exchange_rate = st.number_input(
-        "汇率 (KRW → USD)",
-        min_value=1000.0,
-        max_value=2000.0,
-        value=1550.0,
-        step=10.0,
-        help="韩元÷此汇率=美金。当前约1550",
-    )
-
-    brand_plus_pct = st.slider(
-        "百补比例 (Brand+)",
-        min_value=0,
-        max_value=15,
-        value=5,
-        step=1,
-        format="%d%%",
-        help="全托管 / POP半托 brand+ 商品的百补补贴",
-    )
-    brand_plus_rate = brand_plus_pct / 100.0
-
-    code_cap_pct = st.slider(
-        "Code上限 (占原价)",
-        min_value=10,
-        max_value=35,
-        value=20,
-        step=1,
-        format="%d%%",
-        help="网红code补贴占报名原价的上限",
-    )
-    code_cap_rate = code_cap_pct / 100.0
-
-    total_cap_pct = st.slider(
-        "总补贴上限",
-        min_value=15,
-        max_value=40,
-        value=25,
-        step=1,
-        format="%d%%",
-        help="百补+code+店铺券 叠加后不能超过此比例",
-    )
-    total_cap_rate = total_cap_pct / 100.0
-
-    st.markdown("---")
-    st.markdown("**Code自动计算**")
-
-    auto_code = st.checkbox(
-        "自动计算Code金额",
-        value=True,
-        help="根据目标总补贴比例自动倒推code金额（向下取到.5）。关闭则使用表格中已有的code。",
-    )
-
-    target_subsidy_pct = st.slider(
-        "目标总补贴比例",
-        min_value=15,
-        max_value=25,
-        value=24,
-        step=1,
-        format="%d%%",
-        help="工具按此比例倒推code。设24%留1个点余量，需要时可手动调到25%",
-        disabled=not auto_code,
-    )
-    target_subsidy_rate = target_subsidy_pct / 100.0
-
-    st.markdown("---")
-    st.markdown("**校验规则**")
-
-    check_code_round = st.checkbox(
-        "Code金额须为整数或.5",
-        value=True,
-        help="例如 5, 5.5, 10 合法；5.3 不合法",
-    )
-    check_price_vs_external = st.checkbox(
-        "比价：AE最终价 vs 站外最低价",
-        value=True,
-    )
-
-    st.markdown("---")
-    st.markdown("**验价容差**")
-    st.caption("报名价 vs 实际页面价的允许偏差")
-
-    tolerance_pass_pct = st.slider(
-        "通过阈值 (≤此偏差为正常)",
-        min_value=1,
-        max_value=10,
-        value=5,
-        step=1,
-        format="%d%%",
-        help="偏差在此范围内视为正常价格浮动，不报错",
-    )
-    tolerance_warn_pct = st.slider(
-        "警告阈值 (≤此偏差需留意)",
-        min_value=5,
-        max_value=30,
-        value=15,
-        step=1,
-        format="%d%%",
-        help="偏差超过通过阈值但在警告阈值内，标黄提醒",
-    )
-    tolerance_abs_usd = st.number_input(
-        "绝对差额红线 ($)",
-        min_value=10.0,
-        max_value=200.0,
-        value=50.0,
-        step=5.0,
-        help="不管百分比多少，差额超过此金额直接标红",
-    )
-
-    st.markdown("---")
-
-    enable_naver = st.checkbox(
-        "启用 Naver 站外比价",
-        value=False,
-        help="首次提品需要完整比价时勾选；行业改价后重跑链路时可不勾，节省时间",
-    )
-
-    if enable_naver:
-        st.markdown("**Naver 比价 API**")
-        st.caption("站外最低价查询（密钥只存浏览器会话）")
-
-        naver_id = st.text_input(
-            "Client ID",
-            value=st.session_state.get("naver_id", ""),
-            key="naver_id_input",
-            placeholder="Naver 开发者平台 Client ID",
+        exchange_rate = st.number_input(
+            "汇率 (KRW → USD)",
+            min_value=1000.0,
+            max_value=2000.0,
+            value=1550.0,
+            step=10.0,
+            help="韩元÷此汇率=美金。当前约1550",
         )
-        naver_secret = st.text_input(
-            "Client Secret",
-            value=st.session_state.get("naver_secret", ""),
-            type="password",
-            key="naver_secret_input",
-            placeholder="Naver 开发者平台 Client Secret",
-        )
-        if st.button("💾 保存 Naver 密钥", width="stretch"):
-            st.session_state["naver_id"] = naver_id.strip()
-            st.session_state["naver_secret"] = naver_secret.strip()
-            st.success("已保存 ✓")
-    else:
-        naver_id = ""
-        naver_secret = ""
 
-    st.markdown("---")
-    st.markdown("**品牌维度（可选）**")
-    brand_file = st.file_uploader(
-        "上传品牌维度商品信息.xlsx",
-        type=["xlsx", "xls"],
-        help="上传后可按品牌/类目维度查看GMV分布",
-        key="brand_file_uploader",
-    )
+        brand_plus_pct = st.slider(
+            "百补比例 (Brand+)",
+            min_value=0,
+            max_value=15,
+            value=5,
+            step=1,
+            format="%d%%",
+            help="全托管 / POP半托 brand+ 商品的百补补贴",
+        )
+        brand_plus_rate = brand_plus_pct / 100.0
+
+        code_cap_pct = st.slider(
+            "Code上限 (占原价)",
+            min_value=10,
+            max_value=35,
+            value=20,
+            step=1,
+            format="%d%%",
+            help="网红code补贴占报名原价的上限",
+        )
+        code_cap_rate = code_cap_pct / 100.0
+
+        total_cap_pct = st.slider(
+            "总补贴上限",
+            min_value=15,
+            max_value=40,
+            value=25,
+            step=1,
+            format="%d%%",
+            help="百补+code+店铺券 叠加后不能超过此比例",
+        )
+        total_cap_rate = total_cap_pct / 100.0
+
+        st.markdown("---")
+        st.markdown("**Code自动计算**")
+
+        auto_code = st.checkbox(
+            "自动计算Code金额",
+            value=True,
+            help="根据目标总补贴比例自动倒推code金额（向下取到.5）。关闭则使用表格中已有的code。",
+        )
+
+        target_subsidy_pct = st.slider(
+            "目标总补贴比例",
+            min_value=15,
+            max_value=25,
+            value=24,
+            step=1,
+            format="%d%%",
+            help="工具按此比例倒推code。设24%留1个点余量，需要时可手动调到25%",
+            disabled=not auto_code,
+        )
+        target_subsidy_rate = target_subsidy_pct / 100.0
+
+        st.markdown("---")
+        st.markdown("**校验规则**")
+
+        check_code_round = st.checkbox(
+            "Code金额须为整数或.5",
+            value=True,
+            help="例如 5, 5.5, 10 合法；5.3 不合法",
+        )
+        check_price_vs_external = st.checkbox(
+            "比价：AE最终价 vs 站外最低价",
+            value=True,
+        )
+
+        st.markdown("---")
+        st.markdown("**验价容差**")
+        st.caption("报名价 vs 实际页面价的允许偏差")
+
+        tolerance_pass_pct = st.slider(
+            "通过阈值 (≤此偏差为正常)",
+            min_value=1,
+            max_value=10,
+            value=5,
+            step=1,
+            format="%d%%",
+            help="偏差在此范围内视为正常价格浮动，不报错",
+        )
+        tolerance_warn_pct = st.slider(
+            "警告阈值 (≤此偏差需留意)",
+            min_value=5,
+            max_value=30,
+            value=15,
+            step=1,
+            format="%d%%",
+            help="偏差超过通过阈值但在警告阈值内，标黄提醒",
+        )
+        tolerance_abs_usd = st.number_input(
+            "绝对差额红线 ($)",
+            min_value=10.0,
+            max_value=200.0,
+            value=50.0,
+            step=5.0,
+            help="不管百分比多少，差额超过此金额直接标红",
+        )
+
+        st.markdown("---")
+
+        enable_naver = st.checkbox(
+            "启用 Naver 站外比价",
+            value=False,
+            help="首次提品需要完整比价时勾选；行业改价后重跑链路时可不勾，节省时间",
+        )
+
+        if enable_naver:
+            st.markdown("**Naver 比价 API**")
+            st.caption("站外最低价查询（密钥只存浏览器会话）")
+
+            naver_id = st.text_input(
+                "Client ID",
+                value=st.session_state.get("naver_id", ""),
+                key="naver_id_input",
+                placeholder="Naver 开发者平台 Client ID",
+            )
+            naver_secret = st.text_input(
+                "Client Secret",
+                value=st.session_state.get("naver_secret", ""),
+                type="password",
+                key="naver_secret_input",
+                placeholder="Naver 开发者平台 Client Secret",
+            )
+            if st.button("💾 保存 Naver 密钥", width="stretch"):
+                st.session_state["naver_id"] = naver_id.strip()
+                st.session_state["naver_secret"] = naver_secret.strip()
+                st.success("已保存 ✓")
+        else:
+            naver_id = ""
+            naver_secret = ""
+
+        st.markdown("---")
+        st.markdown("**品牌维度（可选）**")
+        brand_file = st.file_uploader(
+            "上传品牌维度商品信息.xlsx",
+            type=["xlsx", "xls"],
+            help="上传后可按品牌/类目维度查看GMV分布",
+            key="brand_file_uploader",
+        )
 
 # ─────────────────────────────────────────────
 # 共享工具函数（一轮定价 / 二轮定价 通用）
@@ -687,52 +869,103 @@ def build_formatted_excel(export_df, channel_col=None):
     return buf
 
 # ─────────────────────────────────────────────
-# 主区域
+# 页面路由：首页(价格力管控) → 价格链路制作 / 历史数据查询
 # ─────────────────────────────────────────────
-# 模块 / 轮次切换状态（按钮不存状态，放 session_state）
-if "top_module" not in st.session_state:
-    st.session_state.top_module = "pricing"
+if "page" not in st.session_state:
+    st.session_state.page = "home"
 if "round_mode" not in st.session_state:
     st.session_state.round_mode = "r1"
 
-# ─────────────────────────────────────────────
-# 顶层模块切换（按钮）：价格链路管控 / 历史数据中枢
-# ─────────────────────────────────────────────
-with st.container():
-    st.markdown('<div class="modswitch-marker"></div>', unsafe_allow_html=True)
-    _m1, _m2 = st.columns(2)
-    if _m1.button("💰 价格链路管控", use_container_width=True, key="btn_mod_pricing",
-                  type="primary" if st.session_state.top_module == "pricing" else "secondary"):
-        st.session_state.top_module = "pricing"
-        st.rerun()
-    if _m2.button("📊 历史数据中枢", use_container_width=True, key="btn_mod_history",
-                  type="primary" if st.session_state.top_module == "history" else "secondary"):
-        st.session_state.top_module = "history"
-        st.rerun()
 
-if st.session_state.top_module == "history":
-    # 历史数据 = 独立第二页：只显示它自己的大标题
+def _title_bar(coin, en, cn):
+    """游戏机顶栏式大标题（每页只出现一次）"""
+    st.markdown(
+        f'<div class="title-bar"><span class="coin">{coin}</span>'
+        f'<span class="title-en">{en}</span>'
+        f'<span class="title-cn">{cn}</span>'
+        f'<span class="cursor-blink">▮</span></div>',
+        unsafe_allow_html=True,
+    )
+
+
+def _back_home(key):
+    """子页面左上角返回首页按钮"""
+    with st.container():
+        st.markdown('<div class="backbtn-marker"></div>', unsafe_allow_html=True)
+        if st.button("← 返回首页", key=key):
+            st.session_state.page = "home"
+            st.rerun()
+
+
+if st.session_state.page == "home":
+    # ── 首页：大标题「价格力管控」+ 两个方形模块卡 ──
+    st.markdown(
+        """
+        <div class="title-bar home-hero">
+            <span class="coin">💰</span>
+            <span class="title-en">PRICE</span>
+            <span class="title-cn">价格力管控</span>
+            <span class="cursor-blink">▮</span>
+        </div>
+        <p class="subtitle home-hint">网红团购一站式平台 · 大促价格全链路 · 点击下方模块进入 👇</p>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.markdown("")
+
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown(
+            """
+            <div class="homecard-marker"></div>
+            <div class="hc-icon">🔗</div>
+            <div class="hc-title">大促价格链路制作</div>
+            <div class="hc-desc">上传商品表 → 自动计算 → 校验比价 → 导出链路表<br>支持一轮定价 / 二轮生态表定价</div>
+            <div class="hc-enter">进入 →</div>
+            """,
+            unsafe_allow_html=True,
+        )
+        if st.button("进入大促价格链路制作", key="home_go_make", use_container_width=True):
+            st.session_state.page = "make"
+            st.rerun()
+    with c2:
+        st.markdown(
+            """
+            <div class="homecard-marker"></div>
+            <div class="hc-icon">📊</div>
+            <div class="hc-title">大促历史数据查询</div>
+            <div class="hc-desc">4 期大促成交数据 · 品牌 / 商品 / 网红档案<br>定价前先查历史价，团购价有据可依</div>
+            <div class="hc-enter">进入 →</div>
+            """,
+            unsafe_allow_html=True,
+        )
+        if st.button("进入大促历史数据查询", key="home_go_history", use_container_width=True):
+            st.session_state.page = "history"
+            st.rerun()
+    st.stop()
+
+if st.session_state.page == "history":
+    # ── 第二页：历史数据查询 ──
+    _back_home("btn_back_from_history")
+    _title_bar("🗂️", "DATA", "历史数据查询")
+    st.markdown(
+        '<p class="subtitle">4 期大促数据 · 品牌 / 商品 / 网红 / 期次 · 定价的历史依据</p>',
+        unsafe_allow_html=True,
+    )
     import history_hub
+
     history_hub.render()
     st.stop()
 
 # ─────────────────────────────────────────────
-# 价格链路管控页：大标题 + 轮次切换
+# 第二页：价格链路制作
 # ─────────────────────────────────────────────
-st.markdown("""
-<div class="app-hero">
-    <span class="hero-star hero-star-l">✦</span>
-    <span class="hero-star hero-star-r">✦</span>
-    <span class="hero-star hero-star-2">✦</span>
-    <span class="hero-star hero-star-3">✦</span>
-    <span class="hero-star hero-star-4">✦</span>
-    <span class="hero-star hero-star-5">✦</span>
-    <div class="hero-logo">💰</div>
-    <div class="hero-title">价格链路管控</div>
-    <div class="hero-sub">网红团购一站式平台 · 上传商品表 → 自动计算 → 校验 → 导出</div>
-</div>
-""", unsafe_allow_html=True)
-st.markdown("")
+_back_home("btn_back_from_make")
+_title_bar("🔗", "MAKE", "价格链路制作")
+st.markdown(
+    '<p class="subtitle">上传商品表 → 自动计算 → 校验 → 导出 · 一轮 / 二轮定价</p>',
+    unsafe_allow_html=True,
+)
 
 # ─────────────────────────────────────────────
 # 轮次切换（按钮）：一轮定价 / 二轮定价
