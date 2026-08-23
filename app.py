@@ -145,13 +145,19 @@ st.markdown("""
     }
     [data-testid="stVerticalBlock"]:has(> .element-container:first-child .homecard-marker) > .element-container {
         margin: 0 !important;
+        /* element-container 自带 position:relative，会劫持透明按钮的定位（塌成一条线），
+           必须强制 static，让按钮相对整张卡片定位 */
+        position: static !important;
     }
     [data-testid="stVerticalBlock"]:has(> .element-container:first-child .homecard-marker) .stButton {
         margin: 0 !important;
     }
     [data-testid="stVerticalBlock"]:has(> .element-container:first-child .homecard-marker) .stButton button {
         position: absolute;
-        inset: 0;
+        top: 0; left: 0; right: 0; bottom: 0;
+        width: 100% !important;
+        height: 100% !important;
+        min-height: 0 !important;
         opacity: 0;
         z-index: 6;
         border-radius: 8px;
