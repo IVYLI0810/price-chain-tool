@@ -1,5 +1,5 @@
 """
-网红团购 · 价格链路自动化工具
+网红团购 · 价格链路管控工具
 网红团购一站式平台 - 第一个模块
 """
 
@@ -21,7 +21,7 @@ import eco_pricing  # 二轮定价·生态表批量定价 核心逻辑
 # 页面配置
 # ─────────────────────────────────────────────
 st.set_page_config(
-    page_title="价格链路自动化 | 网红团购平台",
+    page_title="价格链路管控 | 网红团购平台",
     page_icon="💰",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -120,6 +120,27 @@ st.markdown("""
     }
     .stButton button[data-testid="stBaseButton-primary"]:active {
         transform: translate(2px,2px); box-shadow: none !important;
+    }
+
+    /* ---------- 模块/轮次切换按钮组：黑底=选中 · 白底=未选中 ----------
+       原理同 KOL Finder 关键词分组：容器内第一个元素是隐藏的 marker，
+       用 :has() 选中"直接子级含该标记"的容器，不会误伤其他按钮。 ---------- */
+    .modswitch-marker { display: none; }
+    [data-testid="stVerticalBlock"]:has(> .element-container .modswitch-marker) .stButton button {
+        width: 100% !important; height: 46px !important; min-height: 46px !important;
+        border-radius: 999px !important; padding: 0 10px !important;
+    }
+    [data-testid="stVerticalBlock"]:has(> .element-container .modswitch-marker) .stButton button[data-testid="stBaseButton-primary"] {
+        width: 100% !important; height: 46px !important; min-height: 46px !important;
+        border-radius: 999px !important; padding: 0 10px !important;
+        background: #1c1c1e !important; color: #fff !important;
+        box-shadow: 4px 4px 0 rgba(28,28,30,.35);
+    }
+    [data-testid="stVerticalBlock"]:has(> .element-container .modswitch-marker) .stButton button:not([data-testid="stBaseButton-primary"]) {
+        background: #fff !important; color: #1c1c1e !important;
+    }
+    [data-testid="stVerticalBlock"]:has(> .element-container .modswitch-marker) .stButton button:not([data-testid="stBaseButton-primary"]):hover {
+        background: #ffd9e3 !important; color: #1c1c1e !important;
     }
 
     /* ---------- Tabs：均分胶囊 · 白底=未选中 · 黑底=选中 · 黑描边+硬阴影 ---------- */
@@ -668,6 +689,36 @@ def build_formatted_excel(export_df, channel_col=None):
 # ─────────────────────────────────────────────
 # 主区域
 # ─────────────────────────────────────────────
+# 模块 / 轮次切换状态（按钮不存状态，放 session_state）
+if "top_module" not in st.session_state:
+    st.session_state.top_module = "pricing"
+if "round_mode" not in st.session_state:
+    st.session_state.round_mode = "r1"
+
+# ─────────────────────────────────────────────
+# 顶层模块切换（按钮）：价格链路管控 / 历史数据中枢
+# ─────────────────────────────────────────────
+with st.container():
+    st.markdown('<div class="modswitch-marker"></div>', unsafe_allow_html=True)
+    _m1, _m2 = st.columns(2)
+    if _m1.button("💰 价格链路管控", use_container_width=True, key="btn_mod_pricing",
+                  type="primary" if st.session_state.top_module == "pricing" else "secondary"):
+        st.session_state.top_module = "pricing"
+        st.rerun()
+    if _m2.button("📊 历史数据中枢", use_container_width=True, key="btn_mod_history",
+                  type="primary" if st.session_state.top_module == "history" else "secondary"):
+        st.session_state.top_module = "history"
+        st.rerun()
+
+if st.session_state.top_module == "history":
+    # 历史数据 = 独立第二页：只显示它自己的大标题
+    import history_hub
+    history_hub.render()
+    st.stop()
+
+# ─────────────────────────────────────────────
+# 价格链路管控页：大标题 + 轮次切换
+# ─────────────────────────────────────────────
 st.markdown("""
 <div class="app-hero">
     <span class="hero-star hero-star-l">✦</span>
@@ -677,38 +728,28 @@ st.markdown("""
     <span class="hero-star hero-star-4">✦</span>
     <span class="hero-star hero-star-5">✦</span>
     <div class="hero-logo">💰</div>
-    <div class="hero-title">价格链路自动化</div>
+    <div class="hero-title">价格链路管控</div>
     <div class="hero-sub">网红团购一站式平台 · 上传商品表 → 自动计算 → 校验 → 导出</div>
 </div>
 """, unsafe_allow_html=True)
 st.markdown("")
 
 # ─────────────────────────────────────────────
-# 顶层模块切换：价格链路定价 / 历史数据中枢
+# 轮次切换（按钮）：一轮定价 / 二轮定价
 # ─────────────────────────────────────────────
-top_module = st.radio(
-    "功能模块",
-    ["💰 价格链路定价", "📊 历史数据中枢"],
-    horizontal=True,
-    label_visibility="collapsed",
-    key="top_module_switch",
-)
-if "历史数据" in top_module:
-    import history_hub
-    history_hub.render()
-    st.stop()
+with st.container():
+    st.markdown('<div class="modswitch-marker"></div>', unsafe_allow_html=True)
+    _r1, _r2 = st.columns(2)
+    if _r1.button("🔵 一轮定价", use_container_width=True, key="btn_round1",
+                  type="primary" if st.session_state.round_mode == "r1" else "secondary"):
+        st.session_state.round_mode = "r1"
+        st.rerun()
+    if _r2.button("🟠 二轮定价 · 生态表", use_container_width=True, key="btn_round2",
+                  type="primary" if st.session_state.round_mode == "r2" else "secondary"):
+        st.session_state.round_mode = "r2"
+        st.rerun()
 
-# ─────────────────────────────────────────────
-# 模块切换：一轮定价 / 二轮定价
-# ─────────────────────────────────────────────
-module_mode = st.radio(
-    "定价轮次",
-    ["🔵 一轮定价", "🟠 二轮定价 · 生态表"],
-    horizontal=True,
-    label_visibility="collapsed",
-)
-
-if "二轮" in module_mode:
+if st.session_state.round_mode == "r2":
     st.markdown("### 🟠 二轮定价 · 生态表批量定价")
     st.caption(
         "丢进【行业表 + 空白生态表 + 到手价表】，自动匹配报名价/券、按一轮到手价倒推 code，"
