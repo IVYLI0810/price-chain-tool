@@ -20,78 +20,127 @@ DB_PATH = next((str(p) for p in _DB_CANDIDATES if p.exists()), None)
 
 
 # ─────────────────────────────────────────────
-# Apple 风样式（白底 · 克制 · 高级灰）
+# 卡通像素风样式（与 KOL Finder / 价格链路主页一致：粉底 · 黑描边 · 硬阴影）
 # ─────────────────────────────────────────────
 def inject_css():
     st.markdown("""
 <style>
     .hub-app { margin-top:-1rem; }
-    .stApp { background: #f5f5f7; }
+    .stApp { background: #f5a3b8; background-attachment: fixed; }
     footer {visibility:hidden;} #MainMenu {visibility:hidden;}
 
     h1,h2,h3,h4{
-      font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','SF Pro Text',
-        'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif;
-      color:#1d1d1f;font-weight:700;letter-spacing:-0.02em;}
+      font-family: ui-rounded,'PingFang SC','Hiragino Sans GB','Microsoft YaHei',-apple-system,sans-serif;
+      color:#1c1c1e;font-weight:800;letter-spacing:-0.01em;}
 
-    /* 页头 */
-    .hub-hero{padding:28px 8px 22px;margin:4px 0 20px;}
-    .hub-hero .t{font-size:32px;font-weight:700;letter-spacing:-0.02em;color:#1d1d1f;}
-    .hub-hero .s{font-size:15px;color:#86868b;margin-top:8px;font-weight:400;}
+    /* 页头：黑圆标 + 黄投影标题（与主页同款 hero） */
+    .app-hero { text-align:center; padding:14px 0 6px; position:relative; }
+    .app-hero .hero-logo {
+        width:96px;height:96px;margin:0 auto 18px;border-radius:50%;
+        background:#1c1c1e;color:#f5c542;display:flex;align-items:center;justify-content:center;
+        font-size:40px;border:5px solid #1c1c1e;box-shadow:6px 6px 0 rgba(28,28,30,.3); }
+    .app-hero .hero-title {
+        font-size:44px;font-weight:800;color:#1c1c1e;margin:0 0 10px;
+        font-family:ui-rounded,'PingFang SC','Hiragino Sans GB','Microsoft YaHei',-apple-system,sans-serif;
+        letter-spacing:1px;text-shadow:4px 4px 0 #f5c542; }
+    .app-hero .hero-sub { font-size:16px;color:#a05c74;font-weight:700;margin:0; }
+    .app-hero .hero-star { position:absolute;font-size:24px;animation:twinkle 2.6s ease-in-out infinite; }
+    .app-hero .hero-star-l { left:20%;top:20px;color:#8674d6;animation-delay:0s;animation-duration:2.2s; }
+    .app-hero .hero-star-r { right:20%;top:20px;color:#f5c542;animation-delay:.8s;animation-duration:3.1s; }
+    .app-hero .hero-star-2 { left:28%;top:92px;color:#f5c542;font-size:16px;animation-delay:1.4s;animation-duration:2.7s; }
+    .app-hero .hero-star-3 { right:28%;top:96px;color:#8674d6;font-size:17px;animation-delay:.4s;animation-duration:3.4s; }
+    .app-hero .hero-star-4 { left:14%;top:68px;color:#8674d6;font-size:15px;animation-delay:1.9s;animation-duration:2.4s; }
+    .app-hero .hero-star-5 { right:13%;top:62px;color:#f5c542;font-size:14px;animation-delay:1.1s;animation-duration:2.9s; }
+    @keyframes twinkle {
+        0%, 100% { opacity:.2; transform:scale(.75) rotate(-10deg); }
+        50% { opacity:1; transform:scale(1.2) rotate(10deg); }
+    }
 
-    /* 卡片（白底+极轻阴影） */
-    .glass{background:#ffffff;border:1px solid #e5e5ea;border-radius:18px;
-      box-shadow:0 1px 3px rgba(0,0,0,.04);padding:20px;margin-bottom:14px;}
-
-    /* KPI 卡 */
-    .kpi{background:#ffffff;border:1px solid #e5e5ea;border-radius:18px;
-      box-shadow:0 1px 3px rgba(0,0,0,.04);padding:20px;height:100%;}
-    .kpi .k{font-size:13px;color:#86868b;font-weight:500;margin-bottom:8px;}
-    .kpi .v{font-size:28px;font-weight:700;color:#1d1d1f;line-height:1.1;letter-spacing:-0.02em;}
-    .kpi .d{font-size:12px;margin-top:8px;font-weight:600;}
-    .kpi .hint{font-size:12px;color:#86868b;margin-top:8px;line-height:1.5;}
-    .up{color:#34c759;} .down{color:#ff3b30;}
+    /* KPI 卡：奶油底 + 黑描边 + 硬阴影 */
+    .glass{background:#fffdf7;border:3px solid #1c1c1e;border-radius:18px;
+      box-shadow:6px 6px 0 #1c1c1e;padding:20px;margin-bottom:14px;}
+    .kpi{background:#fffdf7;border:3px solid #1c1c1e;border-radius:18px;
+      box-shadow:4px 4px 0 #1c1c1e;padding:20px;height:100%;}
+    .kpi .k{font-size:13px;color:#a05c74;font-weight:800;margin-bottom:8px;}
+    .kpi .v{font-size:28px;font-weight:800;color:#1c1c1e;line-height:1.1;letter-spacing:-0.01em;
+      font-family:ui-rounded,'PingFang SC','Hiragino Sans GB','Microsoft YaHei',-apple-system,sans-serif;}
+    .kpi .d{font-size:12px;margin-top:8px;font-weight:800;}
+    .kpi .hint{font-size:12px;color:#a05c74;margin-top:8px;line-height:1.5;font-weight:600;}
+    .up{color:#1f8b3e;} .down{color:#d70015;}
 
     /* 章节标题 */
-    .sec{font-size:19px;font-weight:700;color:#1d1d1f;margin:28px 0 8px;letter-spacing:-0.02em;}
-    .sec-sub{font-size:13px;color:#86868b;margin:0 0 12px;font-weight:400;}
+    .sec{font-size:19px;font-weight:800;color:#1c1c1e;margin:28px 0 8px;letter-spacing:-0.01em;}
+    .sec-sub{font-size:13px;color:#a05c74;margin:0 0 12px;font-weight:600;}
 
     /* 场景快捷卡片 */
-    .scn{background:#ffffff;border:1px solid #e5e5ea;border-radius:16px;
-      padding:18px;cursor:pointer;transition:.2s;height:100%;}
-    .scn:hover{box-shadow:0 4px 16px rgba(0,0,0,.08);border-color:#d2d2d7;}
+    .scn{background:#fffdf7;border:3px solid #1c1c1e;border-radius:16px;
+      padding:18px;cursor:pointer;transition:.12s;height:100%;
+      box-shadow:4px 4px 0 #1c1c1e;}
+    .scn:hover{background:#ffd9e3;box-shadow:4px 4px 0 #1c1c1e;}
     .scn .e{font-size:24px;}
-    .scn .t{font-size:15px;font-weight:600;color:#1d1d1f;margin-top:8px;}
-    .scn .d{font-size:12px;color:#86868b;margin-top:6px;line-height:1.5;}
+    .scn .t{font-size:15px;font-weight:800;color:#1c1c1e;margin-top:8px;}
+    .scn .d{font-size:12px;color:#a05c74;margin-top:6px;line-height:1.5;font-weight:600;}
 
-    /* 大白话注释 */
-    .explain{font-size:13px;color:#6e6e73;line-height:1.6;background:#f5f5f7;
-      border-left:3px solid #0071e3;padding:10px 14px;border-radius:0 12px 12px 0;margin:8px 0 14px;}
+    /* 大白话注释：粉底 + 黑描边 */
+    .explain{font-size:13px;color:#1c1c1e;line-height:1.6;background:#ffd9e3;
+      border:3px solid #1c1c1e;border-radius:12px;padding:10px 14px;margin:8px 0 14px;
+      font-weight:600;}
 
-    /* 徽章 */
-    .badge{display:inline-block;padding:3px 12px;border-radius:999px;font-size:12px;font-weight:600;}
-    .b-up{background:#e8f8ec;color:#1f8b3e;} .b-down{background:#fdecea;color:#d70015;}
-    .b-flat{background:#f0f1f3;color:#515154;} .b-info{background:#e8f1fb;color:#0066cc;}
+    /* 徽章：纯色 + 黑描边 */
+    .badge{display:inline-block;padding:3px 12px;border-radius:999px;font-size:12px;font-weight:800;
+      border:2px solid #1c1c1e;}
+    .b-up{background:#7fd8a4;color:#1c1c1e;} .b-down{background:#ffd9e3;color:#1c1c1e;}
+    .b-flat{background:#fffdf7;color:#1c1c1e;} .b-info{background:#e6e0f5;color:#1c1c1e;}
 
-    /* Streamlit 组件 */
-    div[data-testid="stSidebar"]{background:#fbfbfd;border-right:1px solid #e5e5ea;}
-    .stTabs [data-baseweb="tab-list"]{gap:4px;background:#e8e8ed;padding:4px;border-radius:12px;}
-    .stTabs [data-baseweb="tab"]{border-radius:9px;padding:8px 18px;font-weight:600;color:#515154;
-      background:transparent;}
-    .stTabs [aria-selected="true"]{background:#ffffff;color:#1d1d1f;
-      box-shadow:0 1px 4px rgba(0,0,0,.12);}
-    div[data-testid="stMetric"]{background:#ffffff;border:1px solid #e5e5ea;
-      border-radius:14px;padding:14px;}
-    div[data-testid="stDataFrame"]{background:#ffffff;border:1px solid #e5e5ea;
-      border-radius:14px;overflow:hidden;}
-    .stButton > button,.stDownloadButton > button{
-      border-radius:980px;font-weight:500;border:none;background:#0071e3;color:#fff;
-      padding:6px 18px;transition:.2s;}
-    .stButton > button:hover,.stDownloadButton > button:hover{background:#0077ed;color:#fff;}
-    details[data-testid="stExpander"]{background:#ffffff;border:1px solid #e5e5ea;
-      border-radius:14px;}
-    hr{border-color:#e5e5ea;}
-    .stAlert{border-radius:12px;}
+    /* Streamlit 组件（与主页同款） */
+    section[data-testid="stSidebar"]{background-color:#ffd9e3;border-right:4px solid #1c1c1e;}
+    .stTabs [role="tablist"]{gap:12px;border-bottom:none;background:transparent;padding:0;display:flex;}
+    .stTabs [role="tab"]{
+      flex:1;border-radius:999px !important;padding:11px 0 !important;
+      font-weight:800;font-family:ui-rounded,'PingFang SC','Hiragino Sans GB','Microsoft YaHei',-apple-system,sans-serif;
+      background:#fff !important;color:#1c1c1e !important;border:3px solid #1c1c1e !important;
+      justify-content:center;box-shadow:4px 4px 0 #1c1c1e;transition:all .12s;}
+    .stTabs [role="tab"]:hover{background:#ffd9e3 !important;color:#1c1c1e !important;}
+    .stTabs [role="tab"][aria-selected="true"]{
+      background:#1c1c1e !important;color:#ffffff !important;
+      box-shadow:4px 4px 0 rgba(28,28,30,.35);}
+    .stTabs [role="tab"] p{color:inherit;}
+    .stTabs .react-aria-SelectionIndicator{display:none !important;}
+    div[data-testid="stMetric"]{background:#fffdf7;border:3px solid #1c1c1e;
+      border-radius:14px;padding:16px 20px;box-shadow:4px 4px 0 #1c1c1e;}
+    div[data-testid="stDataFrame"]{background:#fff;border:3px solid #1c1c1e;
+      border-radius:14px;overflow:hidden;box-shadow:4px 4px 0 rgba(28,28,30,.25);}
+    .stButton button,.stDownloadButton button{
+      border-radius:999px !important;height:44px;padding:0 26px;
+      font-weight:800;font-family:ui-rounded,'PingFang SC','Hiragino Sans GB','Microsoft YaHei',-apple-system,sans-serif;
+      border:3px solid #1c1c1e !important;background:#1c1c1e !important;color:#fff !important;
+      box-shadow:4px 4px 0 rgba(28,28,30,.35);transition:all .12s;
+      display:inline-flex;align-items:center;justify-content:center;}
+    .stButton button p,.stDownloadButton button p{margin:0;color:inherit;}
+    .stButton button:hover,.stDownloadButton button:hover{
+      background:#33333a !important;color:#fff !important;
+      box-shadow:4px 4px 0 rgba(28,28,30,.35);}
+    .stButton button:active,.stDownloadButton button:active{
+      transform:translate(3px,3px);box-shadow:none !important;}
+    .stTextInput input,.stNumberInput input{
+      border-radius:12px !important;height:44px;
+      border:3px solid #1c1c1e !important;background:#fff !important;
+      box-shadow:3px 3px 0 #1c1c1e;font-weight:700;}
+    [data-testid="stSelectbox"] [role="group"],
+    [data-testid="stMultiSelect"] [role="group"],
+    div[data-baseweb="select"] > div{
+      border-radius:12px !important;min-height:44px;
+      border:3px solid #1c1c1e !important;background:#fff !important;
+      box-shadow:3px 3px 0 #1c1c1e;font-weight:700;}
+    div[data-baseweb="popover"] > ul{border-radius:14px;border:3px solid #1c1c1e;}
+    [data-testid="stNumberInputStepUp"],[data-testid="stNumberInputStepDown"]{display:none !important;}
+    div[data-testid="stAlert"],.stAlert{
+      border-radius:14px !important;border:3px solid #1c1c1e !important;
+      box-shadow:4px 4px 0 rgba(28,28,30,.25);}
+    [data-testid="stExpander"]{
+      border-radius:14px !important;border:3px solid #1c1c1e !important;
+      background:#fffdf7 !important;box-shadow:4px 4px 0 rgba(28,28,30,.25);}
+    hr{border-color:#1c1c1e;border-width:2px;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -599,9 +648,16 @@ def render():
     inject_css()
     st.markdown('<div class="hub-app">', unsafe_allow_html=True)
     st.markdown("""
-    <div class="hub-hero">
-      <div class="t">📊 历史大促数据中枢</div>
-      <div class="s">4 期大促数据 · 品牌 / 商品 / 网红 / 期次 · 一目了然的决策依据</div>
+    <div class="app-hero">
+        <span class="hero-star hero-star-l">✦</span>
+        <span class="hero-star hero-star-r">✦</span>
+        <span class="hero-star hero-star-2">✦</span>
+        <span class="hero-star hero-star-3">✦</span>
+        <span class="hero-star hero-star-4">✦</span>
+        <span class="hero-star hero-star-5">✦</span>
+        <div class="hero-logo">📊</div>
+        <div class="hero-title">历史大促数据中枢</div>
+        <div class="hero-sub">4 期大促数据 · 品牌 / 商品 / 网红 / 期次 · 一目了然的决策依据</div>
     </div>""", unsafe_allow_html=True)
 
     if DB_PATH is None:

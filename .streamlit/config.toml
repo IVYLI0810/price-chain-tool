@@ -1,3 +1,14 @@
+# 主题与 KOL Finder 保持一致（卡通像素风：粉底 + 紫色点缀）
+[theme]
+primaryColor = "#8674d6"
+# backgroundColor 用浅粉：让图表按浅色主题渲染（深色坐标轴文字）；
+# 页面实际底色由 app.py 的 CSS 控制（#f5a3b8），视觉与 KOL Finder 一致。
+backgroundColor = "#ffd9e3"
+secondaryBackgroundColor = "#ffd9e3"
+textColor = "#1c1c1e"
+font = "sans serif"
+chartCategoricalColors = ["#8674d6", "#f5c542", "#d98ba3", "#7fd8a4", "#1c1c1e"]
+
 [server]
 # 行业表/生态表常内嵌比价截图，单文件可达 200MB+，放宽上传上限
 maxUploadSize = 500

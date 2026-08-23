@@ -28,72 +28,229 @@ st.set_page_config(
 )
 
 # ─────────────────────────────────────────────
-# 自定义样式
+# 自定义样式（与 KOL Finder 统一：卡通像素风 · 粉底 · 黑描边 · 硬阴影）
 # ─────────────────────────────────────────────
 st.markdown("""
 <style>
-    /* ═══ Apple 风白底主题（与历史数据中枢一致）═══ */
-    .stApp { background: #f5f5f7; }
-
-    h1,h2,h3,h4 {
-        font-family: -apple-system,BlinkMacSystemFont,'SF Pro Display','SF Pro Text',
-          'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif;
-        color: #1d1d1f; font-weight: 700; letter-spacing: -0.02em;
-    }
-    .main-header {
-        font-size: 1.85rem; font-weight: 700; margin-bottom: 0.3rem;
-        color: #1d1d1f; letter-spacing: -0.02em;
-    }
-    .sub-header {
-        color: #86868b; font-size: 0.92rem; margin-bottom: 1.5rem; font-weight: 400;
-    }
-    /* 侧边栏 */
-    div[data-testid="stSidebar"] {
-        background: #fbfbfd; border-right: 1px solid #e5e5ea;
+    /* ---------- 全局底色：纯色粉（卡通像素风 · 无毛玻璃无渐变） ---------- */
+    .stApp {
+        background: #f5a3b8;
+        background-attachment: fixed;
     }
     footer { visibility: hidden; }
     #MainMenu { visibility: hidden; }
 
-    /* 页签（分段控件风） */
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 4px; background: #e8e8ed; padding: 4px; border-radius: 12px;
-    }
-    .stTabs [data-baseweb="tab"] {
-        border-radius: 9px; padding: 8px 18px; font-weight: 600; color: #515154;
-        background: transparent;
-    }
-    .stTabs [aria-selected="true"] {
-        background: #ffffff; color: #1d1d1f; box-shadow: 0 1px 4px rgba(0,0,0,.12);
+    /* ---------- 弹窗遮罩：周围变暗的经典 popup 效果 ---------- */
+    .stDialog {
+        background: rgba(28, 28, 30, 0.55) !important;
     }
 
-    /* 指标卡 */
+    h1, h2, h3, h4 {
+        font-family: ui-rounded, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', -apple-system, sans-serif;
+        color: #1c1c1e; font-weight: 800; letter-spacing: -0.01em;
+    }
+    p, span, div, label, td, th, a, li {
+        font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Inter', 'PingFang SC', sans-serif;
+    }
+
+    /* ---------- 顶部 hero：黑圆标 + 黄投影标题（卡通像素风） ---------- */
+    .app-hero { text-align: center; padding: 14px 0 6px; position: relative; }
+    .app-hero .hero-logo {
+        width: 96px; height: 96px; margin: 0 auto 18px; border-radius: 50%;
+        background: #1c1c1e; color: #f5c542; display: flex; align-items: center; justify-content: center;
+        font-size: 40px; border: 5px solid #1c1c1e; box-shadow: 6px 6px 0 rgba(28,28,30,.3);
+    }
+    .app-hero .hero-title {
+        font-size: 44px; font-weight: 800; color: #1c1c1e; margin: 0 0 10px;
+        font-family: ui-rounded, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', -apple-system, sans-serif;
+        letter-spacing: 1px; text-shadow: 4px 4px 0 #f5c542;
+    }
+    .app-hero .hero-sub { font-size: 16px; color: #a05c74; font-weight: 700; margin: 0; }
+    /* 星星：紫+黄 · 随机闪烁 */
+    .app-hero .hero-star { position: absolute; font-size: 24px; animation: twinkle 2.6s ease-in-out infinite; }
+    .app-hero .hero-star-l { left: 20%; top: 20px; color: #8674d6; animation-delay: 0s; animation-duration: 2.2s; }
+    .app-hero .hero-star-r { right: 20%; top: 20px; color: #f5c542; animation-delay: .8s; animation-duration: 3.1s; }
+    .app-hero .hero-star-2 { left: 28%; top: 92px; color: #f5c542; font-size: 16px; animation-delay: 1.4s; animation-duration: 2.7s; }
+    .app-hero .hero-star-3 { right: 28%; top: 96px; color: #8674d6; font-size: 17px; animation-delay: .4s; animation-duration: 3.4s; }
+    .app-hero .hero-star-4 { left: 14%; top: 68px; color: #8674d6; font-size: 15px; animation-delay: 1.9s; animation-duration: 2.4s; }
+    .app-hero .hero-star-5 { right: 13%; top: 62px; color: #f5c542; font-size: 14px; animation-delay: 1.1s; animation-duration: 2.9s; }
+    @keyframes twinkle {
+        0%, 100% { opacity: .2; transform: scale(.75) rotate(-10deg); }
+        50% { opacity: 1; transform: scale(1.2) rotate(10deg); }
+    }
+
+    /* ---------- 侧边栏：纯浅粉 + 粗黑右边框（无毛玻璃） ---------- */
+    section[data-testid="stSidebar"] {
+        background-color: #ffd9e3;
+        border-right: 4px solid #1c1c1e;
+    }
+
+    /* ---------- 按钮：黑色胶囊 + 黑描边 + 硬阴影（卡通像素风）
+       注意：1.60 里 button 被 tooltip span 包了三层，不是 .stButton 直接子元素，
+       必须用后代选择器（空格），用 > 会完全匹配不到！ ---------- */
+    .stButton button, .stDownloadButton button {
+        border-radius: 999px !important; height: 44px; padding: 0 26px;
+        font-weight: 800; font-family: ui-rounded, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', -apple-system, sans-serif;
+        border: 3px solid #1c1c1e !important;
+        background: #1c1c1e !important;
+        color: #fff !important;
+        box-shadow: 4px 4px 0 rgba(28,28,30,.35);
+        transition: all .12s;
+        display: inline-flex; align-items: center; justify-content: center;
+    }
+    .stButton button p, .stDownloadButton button p { margin: 0; color: inherit; }
+    .stButton button:hover, .stDownloadButton button:hover {
+        background: #33333a !important; color: #fff !important;
+        box-shadow: 4px 4px 0 rgba(28,28,30,.35);
+    }
+    .stButton button:active, .stDownloadButton button:active {
+        transform: translate(3px,3px); box-shadow: none !important;
+    }
+    /* ---------- 图标按钮：白底圆形 + 黑描边 + 硬阴影 ---------- */
+    .stButton button[data-testid="stBaseButton-primary"] {
+        width: 44px !important; height: 44px !important; padding: 0 !important;
+        border-radius: 50% !important;
+        background: #fff !important;
+        color: #1c1c1e !important; border: 3px solid #1c1c1e !important;
+        box-shadow: 3px 3px 0 #1c1c1e;
+    }
+    .stButton button[data-testid="stBaseButton-primary"]:hover {
+        background: #ffd9e3 !important; color: #1c1c1e !important;
+        box-shadow: 3px 3px 0 #1c1c1e;
+    }
+    .stButton button[data-testid="stBaseButton-primary"]:active {
+        transform: translate(2px,2px); box-shadow: none !important;
+    }
+
+    /* ---------- Tabs：均分胶囊 · 白底=未选中 · 黑底=选中 · 黑描边+硬阴影 ---------- */
+    .stTabs [role="tablist"] {
+        gap: 12px; border-bottom: none;
+        background: transparent; padding: 0;
+        display: flex;
+    }
+    .stTabs [role="tab"] {
+        flex: 1;
+        border-radius: 999px !important; padding: 11px 0 !important;
+        font-weight: 800; font-family: ui-rounded, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', -apple-system, sans-serif;
+        background: #fff !important;
+        color: #1c1c1e !important; border: 3px solid #1c1c1e !important;
+        justify-content: center;
+        box-shadow: 4px 4px 0 #1c1c1e;
+        transition: all .12s;
+    }
+    .stTabs [role="tab"]:hover { background: #ffd9e3 !important; color: #1c1c1e !important; }
+    .stTabs [role="tab"][aria-selected="true"] {
+        background: #1c1c1e !important;
+        color: #ffffff !important;
+        box-shadow: 4px 4px 0 rgba(28,28,30,.35);
+    }
+    .stTabs [role="tab"] p { color: inherit; }
+    /* 隐藏默认下划线指示器（1.60 新结构） */
+    .stTabs .react-aria-SelectionIndicator { display: none !important; }
+
+    /* ---------- 指标卡：纯色 + 黑描边 + 硬阴影 ---------- */
     div[data-testid="stMetric"] {
-        background: #ffffff; border: 1px solid #e5e5ea; border-radius: 14px;
-        padding: 14px; box-shadow: 0 1px 3px rgba(0,0,0,.04);
+        background: #fffdf7;
+        border: 3px solid #1c1c1e; border-radius: 14px; padding: 16px 20px;
+        box-shadow: 4px 4px 0 #1c1c1e;
     }
-    /* 数据框 */
+    div[data-testid="stMetricLabel"] { color: #a05c74; font-weight: 700; }
+    div[data-testid="stMetricValue"] {
+        color: #1c1c1e; font-weight: 800;
+        font-family: ui-rounded, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', -apple-system, sans-serif;
+    }
+
+    /* ---------- 数据表：白底 + 黑描边 + 硬阴影 ---------- */
     div[data-testid="stDataFrame"] {
-        background: #ffffff; border: 1px solid #e5e5ea; border-radius: 14px; overflow: hidden;
+        background: #fff; border: 3px solid #1c1c1e; border-radius: 14px;
+        overflow: hidden; box-shadow: 4px 4px 0 rgba(28,28,30,.25);
     }
-    /* 按钮（胶囊形） */
-    .stButton > button, .stDownloadButton > button {
-        border-radius: 980px; font-weight: 500; border: none;
-        background: #0071e3; color: #fff; padding: 6px 18px; transition: .2s;
+
+    /* ---------- 上传框：奶油底 + 黑描边 + 硬阴影（1.60 外层是 div 不是 section） ---------- */
+    [data-testid="stFileUploader"] [data-testid="stFileUploaderDropzone"] {
+        background: #fffdf7 !important; border: 3px solid #1c1c1e !important; border-radius: 14px;
+        box-shadow: 4px 4px 0 rgba(28,28,30,.25);
     }
-    .stButton > button:hover, .stDownloadButton > button:hover {
-        background: #0077ed; color: #fff;
+    [data-testid="stFileUploader"] [data-testid="stFileUploaderSectionHeader"] p {
+        color: #1c1c1e; font-weight: 800;
     }
-    /* 展开器 */
-    details[data-testid="stExpander"] {
-        background: #ffffff; border: 1px solid #e5e5ea; border-radius: 14px;
+    [data-testid="stFileUploader"] div[data-testid="stFileUploaderDropzone"] p {
+        color: #a05c74; font-weight: 700;
     }
-    /* 输入框 */
-    .stTextInput input, .stNumberInput input, .stSelectbox > div > div {
-        border-radius: 10px;
+    [data-testid="stFileUploader"] button[data-testid="stBaseButton-secondary"] {
+        border-radius: 999px !important; border: 3px solid #1c1c1e !important;
+        background: #1c1c1e !important; color: #fff !important; font-weight: 800;
+        box-shadow: 3px 3px 0 rgba(28,28,30,.35);
     }
-    /* 警告/错误提示 */
-    div[data-testid="stAlert"] { border-radius: 12px; }
-    hr { border-color: #e5e5ea; }
+    [data-testid="stFileUploader"] button[data-testid="stBaseButton-secondary"]:hover {
+        background: #33333a !important; color: #fff !important;
+    }
+
+    /* ---------- 输入框/数字框：白底 + 黑描边 + 硬阴影 ---------- */
+    .stTextInput input, .stNumberInput input {
+        border-radius: 12px !important; height: 44px;
+        border: 3px solid #1c1c1e !important; background: #fff !important;
+        box-shadow: 3px 3px 0 #1c1c1e; font-weight: 700;
+    }
+    .stTextArea textarea {
+        border-radius: 14px !important;
+        border: 3px solid #1c1c1e !important; background: #fff !important;
+        box-shadow: 3px 3px 0 #1c1c1e;
+    }
+    .stTextInput input:focus, .stNumberInput input:focus, .stTextArea textarea:focus {
+        border-color: #8674d6 !important; box-shadow: 3px 3px 0 #8674d6;
+    }
+    /* 数字框：隐藏 −/+ 按钮（1.60 改名为 stNumberInputStepUp/Down） */
+    [data-testid="stNumberInputStepUp"], [data-testid="stNumberInputStepDown"] {
+        display: none !important;
+    }
+    .stNumberInput input { padding-right: 20px !important; }
+    /* ---------- 密码框（Naver Secret）：描边挪到外层容器，眼睛图标圈进同一胶囊 ---------- */
+    [data-testid="stTextInputRootElement"]:has(input[type="password"]) {
+        border: 3px solid #1c1c1e !important; border-radius: 12px !important;
+        background: #fff !important; box-shadow: 3px 3px 0 #1c1c1e;
+        height: 44px; align-items: center;
+    }
+    [data-testid="stTextInputRootElement"]:has(input[type="password"]) input {
+        border: none !important; box-shadow: none !important;
+        background: transparent !important; border-radius: 0 !important;
+        height: 38px !important;
+    }
+    [data-testid="stTextInputRootElement"]:has(input[type="password"]):focus-within {
+        border-color: #8674d6 !important; box-shadow: 3px 3px 0 #8674d6;
+    }
+    /* ---------- 下拉框/多选框：白底 + 黑描边 + 硬阴影（1.60 React Aria 结构） ---------- */
+    [data-testid="stSelectbox"] [role="group"],
+    [data-testid="stMultiSelect"] [role="group"],
+    div[data-baseweb="select"] > div {
+        border-radius: 12px !important; min-height: 44px;
+        border: 3px solid #1c1c1e !important; background: #fff !important;
+        box-shadow: 3px 3px 0 #1c1c1e; font-weight: 700;
+    }
+    div[data-baseweb="popover"] > ul { border-radius: 14px; border: 3px solid #1c1c1e; }
+
+    /* ---------- 提示条 / 展开器：黑描边 + 硬阴影 ---------- */
+    div[data-testid="stAlert"], .stAlert {
+        border-radius: 14px !important; border: 3px solid #1c1c1e !important;
+        box-shadow: 4px 4px 0 rgba(28,28,30,.25);
+    }
+    /* 1.60: stExpander 的 testid 从 <details> 挪到外层 <div>，选择器不限定标签 */
+    [data-testid="stExpander"] {
+        border-radius: 14px !important; border: 3px solid #1c1c1e !important;
+        background: #fffdf7 !important; box-shadow: 4px 4px 0 rgba(28,28,30,.25);
+    }
+    pre {
+        border-radius: 12px !important; border: 3px solid #1c1c1e !important;
+        background: #ffd9e3 !important;
+    }
+
+    /* ---------- 进度条：黑描边胶囊 ---------- */
+    [data-testid="stProgressBar"] {
+        border: 2px solid #1c1c1e; border-radius: 999px; overflow: hidden;
+        background: #fff;
+    }
+
+    hr { border-color: #1c1c1e; border-width: 2px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -511,8 +668,20 @@ def build_formatted_excel(export_df, channel_col=None):
 # ─────────────────────────────────────────────
 # 主区域
 # ─────────────────────────────────────────────
-st.markdown('<div class="main-header">💰 价格链路自动化</div>', unsafe_allow_html=True)
-st.markdown('<div class="sub-header">网红团购一站式平台 · 模块一：上传商品表 → 自动计算 → 校验 → 导出</div>', unsafe_allow_html=True)
+st.markdown("""
+<div class="app-hero">
+    <span class="hero-star hero-star-l">✦</span>
+    <span class="hero-star hero-star-r">✦</span>
+    <span class="hero-star hero-star-2">✦</span>
+    <span class="hero-star hero-star-3">✦</span>
+    <span class="hero-star hero-star-4">✦</span>
+    <span class="hero-star hero-star-5">✦</span>
+    <div class="hero-logo">💰</div>
+    <div class="hero-title">价格链路自动化</div>
+    <div class="hero-sub">网红团购一站式平台 · 上传商品表 → 自动计算 → 校验 → 导出</div>
+</div>
+""", unsafe_allow_html=True)
+st.markdown("")
 
 # ─────────────────────────────────────────────
 # 顶层模块切换：价格链路定价 / 历史数据中枢
