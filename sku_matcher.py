@@ -260,27 +260,76 @@ def sku_similarity(input_sku: str, cand_options: list) -> dict:
 
 
 # ─────────────────────────────────────────────
-# 综合匹配度 + 分级
+# 同款判定（名称优先）+ 匹配度分级
 # ─────────────────────────────────────────────
-W_ID, W_NAME, W_SKU = 0.35, 0.25, 0.40  # SKU 权重最高（可调）
+# 逻辑：SKU 不参与"是不是同款"的判定，只在选中同款后用来挑对应价。
+#   1) 商品ID命中 → 认同款
+#   2) ID没命中 → 商品名相似度必须 ≥ NAME_GATE 才认同款；不够像直接淘汰
+# 名称不够像时，SKU 再一致也没意义（同名不同SKU才用SKU区分价格）。
+NAME_GATE = 80.0
 
 
-def grade(score: float, id_hit: bool, model_ok) -> str:
+def grade(id_hit: bool, name_score: float, model_ok) -> str:
+    """同款判定 + 分级。name_score 0~100；model_ok 来自选中商品内的 SKU 型号比对。"""
+    name_score = name_score or 0.0
+    # 根本不算同款：ID没命中且名称不够像
+    if not id_hit and name_score < NAME_GATE:
+        return '未匹配'
+    # 名称/ID对上了，但输入的型号在底表该商品里找不到（如只有非Pro、没有Pro）
     if model_ok is False:
         return '型号不符'
-    if id_hit and score >= 70:
+    if id_hit and name_score >= 75:
         return '高'
-    if score >= 82:
+    if id_hit:
+        return '中'          # ID一致但名称差很多（可能改写/换名），仍认同款
+    if name_score >= 90:
         return '高'
-    if score >= 62:
+    if name_score >= NAME_GATE:
         return '中'
-    if score >= 40:
-        return '低'
-    return '未匹配'
+    return '低'
 
 
-def combine_scores(id_score: float, name_score: float, sku_score) -> float:
-    """sku_score 可能为 None（输入没写SKU）→ 权重摊给 ID/名称。"""
-    if sku_score is None:
-        return round((W_ID * id_score + W_NAME * name_score) / (W_ID + W_NAME), 1)
-    return round(W_ID * id_score + W_NAME * name_score + W_SKU * sku_score, 1)
+def match_score(id_hit: bool, name_score: float) -> float:
+    """对外展示的匹配度%：只看 ID + 名称，SKU 不计入（SKU 只用于同款内挑价）。"""
+    name_score = name_score or 0.0
+    if id_hit:
+        return round(0.4 * 100 + 0.6 * name_score, 1)
+    return round(name_score, 1)
+
+
+# ─────────────────────────────────────────────
+# 商品ID 归一化 + 新品识别
+# ─────────────────────────────────────────────
+def norm_id(v) -> str:
+    """把商品ID统一成干净字符串：去掉浮点尾巴 .0、空值(nan/none)归为''。"""
+    if v is None:
+        return ''
+    s = str(v).strip()
+    if s.lower() in ('nan', 'none', 'null', ''):
+        return ''
+    if s.endswith('.0'):
+        s = s[:-2]
+    return s
+
+
+# 新品标记词（用户手写的标注；不用裸"new"/"新"以免误伤真实品名如"New Jet Fan"）
+NEW_PRODUCT_KEYWORDS = ['新品', '待生成链接', '待生成', '待上链接', '待生成id', '未上架', '未生成链接']
+
+
+def is_new_product(input_id, input_name, input_sku, has_id_col=True):
+    """
+    判断是否新品（新品此前没出现过，不该有历史价 → 跳过匹配）。
+      1) 表格有【商品ID】列、但该行ID为空 → 新品（尚未上架/待生成链接）
+      2) 商品名称或SKU里写了「新品/待生成链接」等标记 → 新品
+    返回 (是否新品, 原因)
+    """
+    pid = norm_id(input_id)
+    if has_id_col and pid == '':
+        return True, '商品ID为空 → 判为新品（尚未上架/待生成链接），无历史价'
+    text = f'{input_name or ""} {input_sku or ""}'
+    for kw in NEW_PRODUCT_KEYWORDS:
+        if kw in text:
+            return True, f'标注了「{kw}」→ 判为新品，无历史价'
+    return False, ''
+
+

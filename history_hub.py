@@ -577,9 +577,10 @@ _SKU_KEYS = ['sku选项', 'sku', '规格', '选项', '型号', 'spec', 'option',
 
 def _sku_template():
     return pd.DataFrame({
-        '商品ID': ['1005008489394609', '1005007612849331', ''],
-        '商品名称': ['AULA F108 Pro 机械键盘', 'Edifier M60 Desktop Speakers', '유그린 145W 보조배터리'],
-        'sku选项': ['F108 Pro Blue', 'White EU-Plug', '25000mAh'],
+        '商品ID': ['1005008489394609', '1005007612849331', '1005005642344316', ''],
+        '商品名称': ['AULA F108 Pro 기계식 키보드', 'Edifier M60 Compact Desktop Speakers',
+                   '유그린 145W 보조배터리', '某新款收纳盒（新品）'],
+        'sku选项': ['F108 Pro Blue', 'White EU-Plug', '25000mAh', '白色'],
     })
 
 
@@ -590,10 +591,13 @@ def page_sku_query():
     st.markdown('<div class="sec">🔎 SKU 历史价 · 批量模糊查</div>', unsafe_allow_html=True)
     st.markdown(
         '<div class="explain">上传一张含【商品ID / 商品名称 / sku选项】的表，'
-        '自动去「SKU明细」底表里找同款同型号，返回 11 / 3 / 6 / 8 月的历史到手价，'
+        '自动去「SKU明细」底表里找同款，返回 11 / 3 / 6 / 8 月的历史到手价，'
         '并给出<b>匹配度</b>和<b>判断依据</b>。<br>'
-        '匹配逻辑：先看商品ID是否一致 → ID对不上就看商品名相似度 → '
-        '<b>最看重 SKU 选项/型号是否一致</b>（Pro 款和非 Pro 款算不同型号，绝不会混价）。</div>',
+        '<b>匹配逻辑（名称优先）</b>：先看商品ID是否一致 → ID对不上就看<b>商品名是否高度相似</b>，'
+        '名称不够像直接判未匹配（SKU再像也不算）→ 确认是同款后，<b>再用 SKU 选项/型号区分该同款下的不同价格</b>'
+        '（Pro 款和非 Pro 款算不同型号，绝不会混价）。<br>'
+        '<b>新品自动跳过</b>：商品ID为空、或名称/SKU里写了「新品/待生成链接」的行，判为新品，'
+        '此前没出现过、本就无历史价，会留空标注「新品·无历史价」。</div>',
         unsafe_allow_html=True)
 
     # ── 底表检查 ──
@@ -684,18 +688,19 @@ def page_sku_query():
         total = len(out)
         graded = out[grade_col].fillna('未匹配') if grade_col else pd.Series(['未匹配'] * total)
         n_high = int((graded == '高').sum())
-        n_mid = int((graded == '中').sum())
-        n_low = int((graded == '低').sum())
+        n_mid = int((graded == '中').sum()) + int((graded == '低').sum())
+        n_new = int((graded == '新品·无历史价').sum())
         n_no = int(graded.isin(['未匹配', '型号不符']).sum())
-        rate = (total - n_no) / total * 100 if total else 0
+        denom = total - n_new  # 新品本就没有历史价，不计入匹配率分母
+        rate = (denom - n_no) / denom * 100 if denom else 0
 
         k1, k2, k3, k4, k5 = st.columns(5)
         for col, lab, val, hint in [
-            (k1, '匹配率', f'{rate:.0f}%', '成功查到历史价的比例'),
-            (k2, '高', f'{n_high}', 'ID/名称/SKU基本都对上'),
-            (k3, '中', f'{n_mid}', '大致同款，建议抽查'),
-            (k4, '低', f'{n_low}', '仅供参考，务必人工确认'),
-            (k5, '未匹配/型号不符', f'{n_no}', '底表没有或型号对不上'),
+            (k1, '匹配率', f'{rate:.0f}%', '除新品外，成功查到历史价的比例'),
+            (k2, '高', f'{n_high}', 'ID一致 或 商品名高度相似'),
+            (k3, '中/低', f'{n_mid}', '大致同款，建议抽查'),
+            (k4, '未匹配/型号不符', f'{n_no}', '名称不够像，或该型号底表没有'),
+            (k5, '新品', f'{n_new}', 'ID为空或标了新品，本就无历史价'),
         ]:
             col.markdown(f'<div class="kpi"><div class="k">{lab}</div>'
                          f'<div class="v" style="font-size:24px">{val}</div>'

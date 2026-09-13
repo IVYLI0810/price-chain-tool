@@ -98,7 +98,7 @@ def _pick_period_price(prod_rows, input_sku):
 
 def match_one(input_id, input_name, input_sku, products, name_pool):
     """匹配单行，返回结果字典。"""
-    input_id = '' if input_id is None else str(input_id).strip()
+    input_id = M.norm_id(input_id)
     input_name = '' if input_name is None else str(input_name).strip()
 
     # ── 候选粗筛 ──
@@ -117,43 +117,37 @@ def match_one(input_id, input_name, input_sku, products, name_pool):
     if not cand_idx:
         return {'matched': False}
 
-    # ── 三维打分选最优商品 ──
+    # ── 选同款商品：只认【商品ID】+【商品名称】，SKU 不参与选品 ──
+    #    名称是门槛：ID没命中时，商品名相似度必须≥NAME_GATE 才算同款；
+    #    名称不够像 → 直接淘汰，SKU再一致也不采纳（避免本末倒置）。
     best = None
     for i in cand_idx:
         p = products[i]
-        idsc = _id_score(input_id, p['ids'])
-        nmsc = M.name_similarity(input_name, p['std_name']) if input_name else None
-        # 商品级 SKU 分：拿全商品所有行的选项合并比对
-        all_opts = [o for opts in p['rows']['options'].tolist() for o in opts]
-        sksim = M.sku_similarity(input_sku, all_opts)
-        sksc = sksim['score']
+        id_hit = bool(input_id) and input_id in p['ids']
+        nmsc = M.name_similarity(input_name, p['std_name']) if input_name else 0.0
+        # 门槛：ID命中 或 名称高相似，二者都不满足则跳过
+        if not id_hit and nmsc < M.NAME_GATE:
+            continue
+        # 排序键：ID命中优先，其次名称相似度
+        sel = (1 if id_hit else 0, nmsc)
+        if best is None or sel > best['sel']:
+            best = {'idx': i, 'product': p, 'sel': sel, 'id_hit': id_hit, 'name_score': nmsc}
 
-        # 组合（None 维度自动摊权重）
-        parts, weights = [], []
-        if idsc is not None:
-            parts.append(idsc); weights.append(M.W_ID)
-        if nmsc is not None:
-            parts.append(nmsc); weights.append(M.W_NAME)
-        if sksc is not None:
-            parts.append(sksc); weights.append(M.W_SKU)
-        total = round(sum(a * b for a, b in zip(parts, weights)) / sum(weights), 1) if weights else 0.0
-
-        # 型号矛盾硬惩罚
-        model_ok = sksim['model_ok']
-        if model_ok is False:
-            total *= 0.4
-
-        rec = {'idx': i, 'product': p, 'total': total, 'id_score': idsc,
-               'name_score': nmsc, 'sku_score': sksc, 'sku_detail': sksim['detail'],
-               'model_ok': model_ok}
-        if best is None or total > best['total']:
-            best = rec
+    if best is None:
+        return {'matched': False}
 
     p = best['product']
-    id_hit = bool(input_id) and input_id in p['ids']
-    g = M.grade(best['total'], id_hit, best['model_ok'])
+    id_hit = best['id_hit']
 
-    # ── 按期取价 ──
+    # ── SKU/型号：只在选中的同款商品内部用来挑价，不决定是不是同款 ──
+    all_opts = [o for opts in p['rows']['options'].tolist() for o in opts]
+    sksim = M.sku_similarity(input_sku, all_opts)
+    model_ok = sksim['model_ok']
+
+    score = M.match_score(id_hit, best['name_score'])
+    g = M.grade(id_hit, best['name_score'], model_ok)
+
+    # ── 按期取价（SKU 在这里发挥作用：同名商品下按型号/选项挑对应价） ──
     period_price = _pick_period_price(p['rows'], input_sku)
 
     # ── 依据（人话） ──
@@ -161,24 +155,26 @@ def match_one(input_id, input_name, input_sku, products, name_pool):
     if id_hit:
         reasons.append('商品ID完全一致')
     elif input_id:
-        reasons.append(f"商品ID未直接命中，靠名称+SKU匹配到同款（底表用过ID：{'/'.join(sorted(p['ids'])) or '无'}）")
-    if best['name_score'] is not None:
-        reasons.append(f"商品名相似 {best['name_score']:.0f}%")
-    if best['sku_score'] is not None:
-        reasons.append(best['sku_detail'])
+        reasons.append(f"商品ID未命中，靠商品名匹配到同款（底表用过ID：{'/'.join(sorted(p['ids'])) or '无'}）")
+    else:
+        reasons.append('无商品ID，靠商品名匹配')
+    reasons.append(f"商品名相似 {best['name_score']:.0f}%")
+    if sksim['score'] is not None:
+        reasons.append('同款内按SKU挑价：' + sksim['detail'])
     if g == '型号不符':
-        reasons.append('⚠ 输入的型号(如Pro款)与底表命中的行不是同一型号，未取价')
+        reasons.append('⚠ 商品名对上了，但输入的型号(如Pro款)在底表该商品里没有，未取价')
 
     return {
         'matched': g not in ('未匹配', '型号不符'),
         'grade': g,
-        'score': best['total'],
+        'score': score,
         'std_name': p['std_name'],
         'matched_ids': '/'.join(sorted(p['ids'])),
         'period_price': period_price,
         'reason': '；'.join(reasons) if reasons else '—',
-        'id_score': best['id_score'], 'name_score': best['name_score'], 'sku_score': best['sku_score'],
+        'id_hit': id_hit, 'name_score': best['name_score'], 'sku_score': sksim['score'],
     }
+
 
 
 def match_batch(df_input: pd.DataFrame, col_id, col_name, col_sku, db_path=None):
@@ -190,13 +186,31 @@ def match_batch(df_input: pd.DataFrame, col_id, col_name, col_sku, db_path=None)
     products = build_products(detail)
     name_pool = [p['name_norm'] for p in products]
 
+    def _clean(v):
+        if v is None:
+            return ''
+        s = str(v).strip()
+        return '' if s.lower() in ('nan', 'none', 'null') else s
+
+    has_id_col = col_id is not None
     recs = []
     for _, row in df_input.iterrows():
         iid = row.get(col_id) if col_id else ''
-        iname = row.get(col_name) if col_name else ''
-        isku = row.get(col_sku) if col_sku else ''
-        res = match_one(iid, iname, isku, products, name_pool)
+        iname = _clean(row.get(col_name) if col_name else '')
+        isku = _clean(row.get(col_sku) if col_sku else '')
         rec = dict(row)
+
+        # ── 新品：ID为空(且表里有ID列) 或 名称/SKU 标了「新品/待生成链接」→ 不查历史价 ──
+        is_new, new_reason = M.is_new_product(iid, iname, isku, has_id_col)
+        if is_new:
+            rec.update({'匹配等级': '新品·无历史价', '匹配度%': None, '依据': new_reason,
+                        '命中标准商品名': '', '命中商品ID': ''})
+            for p_ in M.PERIODS:
+                rec[f'{p_}到手价($)'] = None
+            recs.append(rec)
+            continue
+
+        res = match_one(iid, iname, isku, products, name_pool)
         if not res.get('matched'):
             # 区分"完全没找到"与"找到了但型号不符"
             if res.get('grade') == '型号不符':
@@ -207,16 +221,16 @@ def match_batch(df_input: pd.DataFrame, col_id, col_name, col_sku, db_path=None)
             else:
                 reason = '底表中未找到足够相似的商品'
                 hit_name, hit_ids, g = '', '', '未匹配'
-            rec.update({'匹配等级': g, '匹配度%': res.get('score', ''), '依据': reason,
+            rec.update({'匹配等级': g, '匹配度%': res.get('score'), '依据': reason,
                         '命中标准商品名': hit_name, '命中商品ID': hit_ids})
             for p_ in M.PERIODS:
-                rec[f'{p_}到手价($)'] = ''
+                rec[f'{p_}到手价($)'] = None
             recs.append(rec)
             continue
         pp = res['period_price']
         for p_ in M.PERIODS:
             v = pp.get(p_, {}).get('price')
-            rec[f'{p_}到手价($)'] = round(v, 2) if v is not None and pd.notna(v) else ''
+            rec[f'{p_}到手价($)'] = round(float(v), 2) if v is not None and pd.notna(v) else None
         rec.update({
             '匹配等级': res['grade'],
             '匹配度%': res['score'],
