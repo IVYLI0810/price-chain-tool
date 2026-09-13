@@ -99,8 +99,9 @@ def split_sku_options(raw) -> list:
     if raw is None:
         return []
     s = _fullwidth_to_half(str(raw))
-    # 分隔：换行 与 斜杠 都当作选项分隔符
-    parts = re.split(r'[\r\n]+|/', s)
+    # 分隔：换行、竖线|、斜杠/ 都当作选项分隔符
+    # （CSV底表把单元格内换行统一存成 |，避免多行记录，故这里也认 |）
+    parts = re.split(r'[\r\n|]+|/', s)
     opts = []
     for p in parts:
         p = p.strip()
@@ -301,32 +302,49 @@ def match_score(id_hit: bool, name_score: float) -> float:
 # 商品ID 归一化 + 新品识别
 # ─────────────────────────────────────────────
 def norm_id(v) -> str:
-    """把商品ID统一成干净字符串：去掉浮点尾巴 .0、空值(nan/none)归为''。"""
+    """把商品ID统一成干净字符串：兼容浮点(…609.0)/科学计数(1.005e15)，空值归为''。"""
     if v is None:
         return ''
     s = str(v).strip()
     if s.lower() in ('nan', 'none', 'null', ''):
         return ''
+    # 浮点/科学计数 → 还原成整数字符串（AE 商品ID 16位，在 float64 精确范围内）
+    try:
+        f = float(s)
+        if f.is_integer():
+            return str(int(f))
+    except ValueError:
+        pass
     if s.endswith('.0'):
         s = s[:-2]
     return s
 
 
+def is_valid_product_id(pid: str) -> bool:
+    """有效的 AE 商品ID = 纯数字且足够长。文字（新品/待生成链接）、空、乱填都不算。"""
+    return bool(pid) and pid.isdigit() and len(pid) >= 6
+
+
 # 新品标记词（用户手写的标注；不用裸"new"/"新"以免误伤真实品名如"New Jet Fan"）
-NEW_PRODUCT_KEYWORDS = ['新品', '待生成链接', '待生成', '待上链接', '待生成id', '未上架', '未生成链接']
+NEW_PRODUCT_KEYWORDS = ['新品', '待生成链接', '待生成', '待上链接', '待生成id', '未上架', '未生成链接', '待发链接']
 
 
 def is_new_product(input_id, input_name, input_sku, has_id_col=True):
     """
     判断是否新品（新品此前没出现过，不该有历史价 → 跳过匹配）。
-      1) 表格有【商品ID】列、但该行ID为空 → 新品（尚未上架/待生成链接）
-      2) 商品名称或SKU里写了「新品/待生成链接」等标记 → 新品
+      1) 表格有【商品ID】列，但该行 ID 不是有效数字ID：
+         - 为空 → 新品
+         - 写了「新品 / 待生成链接」等文字 → 新品（这类标注常直接写在ID列里）
+      2) 商品ID/名称/SKU 任一含「新品/待生成链接」等标记词 → 新品
     返回 (是否新品, 原因)
     """
     pid = norm_id(input_id)
-    if has_id_col and pid == '':
-        return True, '商品ID为空 → 判为新品（尚未上架/待生成链接），无历史价'
-    text = f'{input_name or ""} {input_sku or ""}'
+    if has_id_col and not is_valid_product_id(pid):
+        if pid == '':
+            return True, '商品ID为空 → 判为新品（尚未上架/待生成链接），无历史价'
+        return True, f'商品ID不是有效ID（填的是「{pid}」）→ 判为新品/待生成链接，无历史价'
+    # ID 有效时，再扫 ID/名称/SKU 三处文字里的新品标记
+    text = f'{input_id or ""} {input_name or ""} {input_sku or ""}'
     for kw in NEW_PRODUCT_KEYWORDS:
         if kw in text:
             return True, f'标注了「{kw}」→ 判为新品，无历史价'

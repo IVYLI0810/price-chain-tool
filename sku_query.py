@@ -19,15 +19,47 @@ import sku_matcher as M
 
 _HERE = Path(__file__).parent
 DB_PATH = next((str(p) for p in [_HERE / 'history_data.db', Path('history_data.db')] if p.exists()), None)
+# 纯文本底表：GitHub 网页端不接受二进制 .db，改上传 sku_detail.csv（内容完全一致）。
+CSV_PATH = next((str(p) for p in [_HERE / 'sku_detail.csv', Path('sku_detail.csv')] if p.exists()), None)
 
 _NAME_CANDIDATES = 15  # 名称粗筛保留的候选数
 
 
+def _read_detail_frame() -> pd.DataFrame:
+    """优先读 sku_detail.csv（纯文本、网页可上传）；没有再退回 history_data.db。"""
+    cols = ['std_name', 'product_id', 'period', 'sku_raw', 'price', 'raw_val']
+    if CSV_PATH:
+        df = pd.read_csv(CSV_PATH, dtype={'product_id': str, 'std_name': str,
+                                          'period': str, 'sku_raw': str, 'raw_val': str})
+        for c in cols:
+            if c not in df.columns:
+                df[c] = ''
+        df = df[cols]
+    elif DB_PATH:
+        conn = sqlite3.connect(DB_PATH)
+        df = pd.read_sql_query(
+            'SELECT std_name,product_id,period,sku_raw,price,raw_val FROM sku_detail', conn)
+        conn.close()
+    else:
+        raise FileNotFoundError('找不到底表：请确认 sku_detail.csv 或 history_data.db 已上传到程序目录')
+    df['price'] = pd.to_numeric(df['price'], errors='coerce')
+    df['product_id'] = df['product_id'].apply(M.norm_id)
+    df['sku_raw'] = df['sku_raw'].fillna('')
+    return df
+
+
 def load_detail(db_path=None) -> pd.DataFrame:
-    db_path = db_path or DB_PATH
-    conn = sqlite3.connect(db_path)
-    df = pd.read_sql_query('SELECT std_name,product_id,period,sku_raw,price,raw_val FROM sku_detail', conn)
-    conn.close()
+    """加载 SKU 底表。默认走 CSV；显式传入 db_path 时从该 SQLite 读取。"""
+    if db_path:
+        conn = sqlite3.connect(db_path)
+        df = pd.read_sql_query(
+            'SELECT std_name,product_id,period,sku_raw,price,raw_val FROM sku_detail', conn)
+        conn.close()
+        df['price'] = pd.to_numeric(df['price'], errors='coerce')
+        df['product_id'] = df['product_id'].apply(M.norm_id)
+        df['sku_raw'] = df['sku_raw'].fillna('')
+    else:
+        df = _read_detail_frame()
     # 预拆选项，避免重复计算
     df['options'] = df['sku_raw'].apply(M.split_sku_options)
     df['name_norm'] = df['std_name'].apply(M.norm_text)

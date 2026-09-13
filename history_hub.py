@@ -600,14 +600,15 @@ def page_sku_query():
         '此前没出现过、本就无历史价，会留空标注「新品·无历史价」。</div>',
         unsafe_allow_html=True)
 
-    # ── 底表检查 ──
+    # ── 底表检查（优先读纯文本 sku_detail.csv，其次 history_data.db） ──
     try:
-        detail = SQ.load_detail(DB_PATH)
+        detail = SQ.load_detail()
     except Exception as e:  # noqa
         st.error(f'读取底表失败：{e}')
         return
     if detail is None or detail.empty:
-        st.error('底表 sku_detail 为空。请先运行 `python3 sku_ingest.py <Excel路径>` 把 SKU明细 入库。')
+        st.error('底表为空。请确认已把 `sku_detail.csv` 上传到程序目录'
+                 '（或运行 `python3 sku_ingest.py <Excel路径>` 把 SKU明细 入库）。')
         return
 
     n_prod = detail['std_name'].nunique()
@@ -673,7 +674,7 @@ def page_sku_query():
     # ── 运行 ──
     if st.button('🔍 开始匹配查价', use_container_width=True, key='skq_run'):
         with st.spinner('正在逐行模糊匹配…'):
-            out = SQ.match_batch(df_in, col_id, col_name, col_sku, DB_PATH)
+            out = SQ.match_batch(df_in, col_id, col_name, col_sku)
         st.session_state['skq_out'] = out
         st.session_state['skq_n'] = len(out)
 
