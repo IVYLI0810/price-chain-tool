@@ -6,6 +6,7 @@
 """
 
 import sqlite3
+from io import BytesIO
 from pathlib import Path
 
 import streamlit as st
@@ -559,6 +560,162 @@ def page_notes():
 """)
 
 
+def _guess_col(cols, keywords):
+    """按关键词猜列名，猜不到返回 None。"""
+    low = {str(c).lower().replace(' ', ''): c for c in cols}
+    for k in keywords:
+        for lc, orig in low.items():
+            if k in lc:
+                return orig
+    return None
+
+
+_ID_KEYS = ['商品id', 'itemid', 'item_id', 'itemno', '商品编号', '货品id', 'pid', 'id']
+_NAME_KEYS = ['商品名', '标准商品名', '品名', '名称', '标题', 'name', 'title', 'product']
+_SKU_KEYS = ['sku选项', 'sku', '规格', '选项', '型号', 'spec', 'option', '颜色分类']
+
+
+def _sku_template():
+    return pd.DataFrame({
+        '商品ID': ['1005008489394609', '1005007612849331', ''],
+        '商品名称': ['AULA F108 Pro 机械键盘', 'Edifier M60 Desktop Speakers', '유그린 145W 보조배터리'],
+        'sku选项': ['F108 Pro Blue', 'White EU-Plug', '25000mAh'],
+    })
+
+
+def page_sku_query():
+    """SKU 历史价 · 批量模糊查（底表=SKU明细）"""
+    import sku_query as SQ
+
+    st.markdown('<div class="sec">🔎 SKU 历史价 · 批量模糊查</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="explain">上传一张含【商品ID / 商品名称 / sku选项】的表，'
+        '自动去「SKU明细」底表里找同款同型号，返回 11 / 3 / 6 / 8 月的历史到手价，'
+        '并给出<b>匹配度</b>和<b>判断依据</b>。<br>'
+        '匹配逻辑：先看商品ID是否一致 → ID对不上就看商品名相似度 → '
+        '<b>最看重 SKU 选项/型号是否一致</b>（Pro 款和非 Pro 款算不同型号，绝不会混价）。</div>',
+        unsafe_allow_html=True)
+
+    # ── 底表检查 ──
+    try:
+        detail = SQ.load_detail(DB_PATH)
+    except Exception as e:  # noqa
+        st.error(f'读取底表失败：{e}')
+        return
+    if detail is None or detail.empty:
+        st.error('底表 sku_detail 为空。请先运行 `python3 sku_ingest.py <Excel路径>` 把 SKU明细 入库。')
+        return
+
+    n_prod = detail['std_name'].nunique()
+    n_row = len(detail)
+    c0a, c0b = st.columns(2)
+    c0a.markdown(f'<div class="kpi"><div class="k">底表标准商品数</div>'
+                 f'<div class="v" style="font-size:22px">{n_prod:,}</div>'
+                 f'<div class="hint">来自 SKU明细子表</div></div>', unsafe_allow_html=True)
+    c0b.markdown(f'<div class="kpi"><div class="k">底表SKU行数</div>'
+                 f'<div class="v" style="font-size:22px">{n_row:,}</div>'
+                 f'<div class="hint">同款同期可能多行，按型号取价</div></div>', unsafe_allow_html=True)
+
+    # ── 模板下载 ──
+    tmpl = _sku_template()
+    tbuf = BytesIO()
+    tmpl.to_excel(tbuf, index=False)
+    st.download_button('⬇️ 下载输入模板（含3行示例）', tbuf.getvalue(),
+                       file_name='历史价查询_输入模板.xlsx',
+                       mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                       key='skq_tmpl')
+
+    # ── 上传 ──
+    up = st.file_uploader('上传你的表格（.xlsx / .csv）', type=['xlsx', 'csv'], key='skq_up')
+    if up is not None:
+        try:
+            df_in = pd.read_excel(up) if up.name.lower().endswith(('.xlsx', '.xls')) else pd.read_csv(up)
+        except Exception as e:  # noqa
+            st.error(f'读取上传文件失败：{e}')
+            return
+        st.caption(f'已读入 {len(df_in)} 行。')
+    else:
+        df_in = tmpl.copy()
+        st.info('还没上传？下面先用模板里的 3 行示例演示，你可以直接点「开始匹配」看效果。')
+
+    # ── 列映射 ──
+    cols = list(df_in.columns)
+    g_id = _guess_col(cols, _ID_KEYS)
+    g_name = _guess_col(cols, _NAME_KEYS)
+    g_sku = _guess_col(cols, _SKU_KEYS)
+    opt = ['（无此列）'] + [str(c) for c in cols]
+
+    def _idx(guess):
+        return (opt.index(str(guess)) if guess is not None and str(guess) in opt else 0)
+
+    st.markdown('<div class="sec-sub" style="margin-top:14px">确认一下列对应关系（一般会自动认好）</div>',
+                unsafe_allow_html=True)
+    m1, m2, m3 = st.columns(3)
+    with m1:
+        col_id = st.selectbox('【商品ID】对应哪列', opt, index=_idx(g_id), key='skq_cid')
+    with m2:
+        col_name = st.selectbox('【商品名称】对应哪列', opt, index=_idx(g_name), key='skq_cname')
+    with m3:
+        col_sku = st.selectbox('【sku选项】对应哪列', opt, index=_idx(g_sku), key='skq_csku')
+
+    col_id = None if col_id == '（无此列）' else col_id
+    col_name = None if col_name == '（无此列）' else col_name
+    col_sku = None if col_sku == '（无此列）' else col_sku
+
+    if col_name is None and col_id is None:
+        st.warning('至少要指定【商品ID】或【商品名称】其中一列，才能查。')
+        return
+
+    # ── 运行 ──
+    if st.button('🔍 开始匹配查价', use_container_width=True, key='skq_run'):
+        with st.spinner('正在逐行模糊匹配…'):
+            out = SQ.match_batch(df_in, col_id, col_name, col_sku, DB_PATH)
+        st.session_state['skq_out'] = out
+        st.session_state['skq_n'] = len(out)
+
+    if 'skq_out' in st.session_state:
+        out = st.session_state['skq_out']
+        price_cols = [f'{p}到手价($)' for p in PERIODS]
+        have = [c for c in price_cols if c in out.columns]
+        grade_col = '匹配等级' if '匹配等级' in out.columns else None
+
+        # ── 结果概览 ──
+        st.markdown('<div class="sec">📊 匹配结果</div>', unsafe_allow_html=True)
+        total = len(out)
+        graded = out[grade_col].fillna('未匹配') if grade_col else pd.Series(['未匹配'] * total)
+        n_high = int((graded == '高').sum())
+        n_mid = int((graded == '中').sum())
+        n_low = int((graded == '低').sum())
+        n_no = int(graded.isin(['未匹配', '型号不符']).sum())
+        rate = (total - n_no) / total * 100 if total else 0
+
+        k1, k2, k3, k4, k5 = st.columns(5)
+        for col, lab, val, hint in [
+            (k1, '匹配率', f'{rate:.0f}%', '成功查到历史价的比例'),
+            (k2, '高', f'{n_high}', 'ID/名称/SKU基本都对上'),
+            (k3, '中', f'{n_mid}', '大致同款，建议抽查'),
+            (k4, '低', f'{n_low}', '仅供参考，务必人工确认'),
+            (k5, '未匹配/型号不符', f'{n_no}', '底表没有或型号对不上'),
+        ]:
+            col.markdown(f'<div class="kpi"><div class="k">{lab}</div>'
+                         f'<div class="v" style="font-size:24px">{val}</div>'
+                         f'<div class="hint">{hint}</div></div>', unsafe_allow_html=True)
+
+        show_cols = [c for c in out.columns if c not in ('name_norm',)]
+        st.dataframe(out[show_cols], use_container_width=True, hide_index=True, height=420)
+
+        # ── 导出 ──
+        obuf = BytesIO()
+        with pd.ExcelWriter(obuf, engine='openpyxl') as xw:
+            out.to_excel(xw, index=False, sheet_name='历史价匹配结果')
+        st.download_button('⬇️ 下载匹配结果 Excel', obuf.getvalue(),
+                           file_name='历史价_模糊匹配结果.xlsx',
+                           mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                           key='skq_dl')
+        st.caption('💡 「依据」列写清了每行为什么这么判：ID是否一致、名称相似多少、SKU选项命中了底表哪条。'
+                   '匹配度低或型号不符的行会留空，不会硬塞一个价给你。')
+
+
 def render():
     """历史数据查询页内容（大标题由 app.py 的 title-bar 提供，这里不再重复）"""
     inject_css()
@@ -567,9 +724,12 @@ def render():
         st.error('未找到 history_data.db 数据库文件。请将其放在与 app.py 相同的目录下。')
         return
 
-    tab_d, tab_p, tab_b, tab_c, tab_x, tab_s = st.tabs(
-        ['🏠 总览', '🔍 商品档案', '🏷️ 品牌档案', '👤 网红档案', '🧩 维度交叉查询', '📖 口径说明'])
+    tab_q, tab_d, tab_p, tab_b, tab_c, tab_x, tab_s = st.tabs(
+        ['🔎 SKU批量查价', '🏠 总览', '🔍 商品档案', '🏷️ 品牌档案', '👤 网红档案',
+         '🧩 维度交叉查询', '📖 口径说明'])
 
+    with tab_q:
+        page_sku_query()
     with tab_d:
         page_dashboard()
     with tab_p:
@@ -582,3 +742,4 @@ def render():
         page_explorer()
     with tab_s:
         page_notes()
+
