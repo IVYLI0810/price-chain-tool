@@ -131,11 +131,38 @@ def _ambiguous_dim(pr):
     return None
 
 
+def _dim_varies(prod_rows, dim) -> bool:
+    """该商品的选项里某个 NOMATCH 维度是否有>1种取值（"未标注"也算一种取值）。"""
+    vals = set()
+    for opts in prod_rows['options']:
+        for o in (opts or []):
+            v = M.extract_dims(o).get(dim)
+            if dim == 'mod':
+                vals.add(frozenset(v) if v else frozenset())
+            else:
+                vals.add(str(v).lower() if v is not None else '__none__')
+    return len(vals) > 1
+
+
+def _dim_present(prod_rows, dim, iv) -> bool:
+    """该商品是否至少有一行选项的该维度值 == 输入值 iv。"""
+    for opts in prod_rows['options']:
+        for o in (opts or []):
+            rv = M.extract_dims(o).get(dim)
+            if dim == 'mod':
+                if (frozenset(rv) if rv else frozenset()) == (frozenset(iv) if iv else frozenset()):
+                    return True
+            elif rv is not None and str(rv).lower() == str(iv).lower():
+                return True
+    return False
+
+
 def _pick_period_price(prod_rows, input_sku):
     """
     在选中商品内，按期次挑价（规格维度分类）：
       - SOFT 差异（颜色/尺码/同底型号后缀）→ 照常取价，verdict=take
-      - HARD 差异（数量/容量/瓦数/长度/电压/Pro修饰词/底型号）→ 不取价，verdict=ref（给参照）
+      - REF 差异（数量/容量/瓦数/电压）→ 同款不同规格，不取价，verdict=ref（给参照）
+      - NOMATCH 差异（Pro/Plus修饰词、长度、底型号）→ 明显不是同商品，verdict=nomatch（不取价、不给参照）
       - 无输入SKU：取当期最低价；但若该期影响单价的维度取值不一 → verdict=ref
     返回 {period: {price, verdict, hard, soft, sku_raw, ref_row, sku_score}}
     """
@@ -145,12 +172,27 @@ def _pick_period_price(prod_rows, input_sku):
     in_dims = M.extract_dims(' '.join(in_opts)) if have_sku else None
     all_opts = [o for opts in prod_rows['options'] for o in (opts or [])]
     strict_mod = M.mod_varies(all_opts)   # 该商品是否真的区分 Pro/非Pro
+    # 产品级闸门：输入指定的 Pro/长度/底型号，商品确实区分该维度、却没有任何一行匹配
+    # → 明显不是同款，整行判型号不符（避免某期空白选项误取价）
+    gate_dim = None
+    if have_sku:
+        for dim in M.NOMATCH_DIMS:
+            iv = in_dims.get(dim)
+            if not iv:
+                continue
+            if _dim_varies(prod_rows, dim) and not _dim_present(prod_rows, dim, iv):
+                gate_dim = dim
+                break
     for period in M.PERIODS:
         pr = prod_rows[prod_rows['period'] == period]
         if pr.empty:
             continue
         pr2 = pr.dropna(subset=['price'])
         low_row = (pr2 if not pr2.empty else pr).sort_values('price').iloc[0]
+        if gate_dim:
+            out[period] = {'price': None, 'verdict': 'nomatch', 'hard': [gate_dim], 'soft': [],
+                           'sku_raw': low_row['sku_raw'], 'ref_row': None, 'sku_score': None}
+            continue
         if not have_sku:
             amb = _ambiguous_dim(pr)
             if amb:
@@ -160,7 +202,7 @@ def _pick_period_price(prod_rows, input_sku):
                 out[period] = {'price': low_row['price'], 'verdict': 'take', 'hard': [], 'soft': [],
                                'sku_raw': low_row['sku_raw'], 'ref_row': None, 'sku_score': None}
             continue
-        take_best, ref_best = None, None
+        take_best, ref_best, nomatch_best = None, None, None
         for _, row in pr.iterrows():
             hard, soft = _row_dim_verdict(in_dims, row['options'], strict_mod=strict_mod)
             sim = M.sku_similarity(input_sku, row['options'])
@@ -168,8 +210,14 @@ def _pick_period_price(prod_rows, input_sku):
             if not hard:
                 if take_best is None or sc > take_best['sc']:
                     take_best = {'sc': sc, 'row': row, 'soft': soft}
-            elif ref_best is None or sc > ref_best['sc']:
-                ref_best = {'sc': sc, 'row': row, 'hard': hard}
+            elif any(k in M.NOMATCH_DIMS for k in hard):
+                # 含 Pro/长度/底型号 差异 → 明显不是同商品，不取价也不给参照
+                if nomatch_best is None or sc > nomatch_best['sc']:
+                    nomatch_best = {'sc': sc, 'row': row, 'hard': hard}
+            else:
+                # 仅 数量/容量/瓦数/电压 差异 → 同款不同规格，给参照
+                if ref_best is None or sc > ref_best['sc']:
+                    ref_best = {'sc': sc, 'row': row, 'hard': hard}
         if take_best:
             r = take_best['row']
             out[period] = {'price': r['price'], 'verdict': 'take', 'hard': [],
@@ -180,6 +228,11 @@ def _pick_period_price(prod_rows, input_sku):
             out[period] = {'price': None, 'verdict': 'ref', 'hard': ref_best['hard'],
                            'soft': [], 'sku_raw': r['sku_raw'], 'ref_row': r,
                            'sku_score': ref_best['sc']}
+        elif nomatch_best:
+            r = nomatch_best['row']
+            out[period] = {'price': None, 'verdict': 'nomatch', 'hard': nomatch_best['hard'],
+                           'soft': [], 'sku_raw': r['sku_raw'], 'ref_row': None,
+                           'sku_score': nomatch_best['sc']}
     return out
 
 
@@ -226,7 +279,7 @@ def match_one(input_id, input_name, input_sku, products, name_pool):
     p = best['product']
     id_hit = best['id_hit']
 
-    # ── 按期取价（规格维度分类：SOFT差异取价，HARD差异只给参照） ──
+    # ── 按期取价（SOFT差异取价 / REF差异给参照 / NOMATCH差异判型号不符） ──
     period_price = _pick_period_price(p['rows'], input_sku)
 
     verdicts = [v.get('verdict') for v in period_price.values()]
@@ -234,6 +287,8 @@ def match_one(input_id, input_name, input_sku, products, name_pool):
         conclusion = '取到价'
     elif any(v == 'ref' for v in verdicts):
         conclusion = '仅参照'
+    elif any(v == 'nomatch' for v in verdicts):
+        conclusion = '型号不符'
     else:
         conclusion = '无价'
 
@@ -250,7 +305,7 @@ def match_one(input_id, input_name, input_sku, products, name_pool):
         reasons.append('无商品ID，靠商品名匹配')
     reasons.append(f"商品名相似 {best['name_score']:.0f}%")
 
-    soft_dims, hard_dims, ref_parts = [], [], []
+    soft_dims, ref_dims, nomatch_dims, ref_parts = [], [], [], []
     for period in M.PERIODS:
         v = period_price.get(period)
         if not v:
@@ -259,18 +314,24 @@ def match_one(input_id, input_name, input_sku, products, name_pool):
             for k in v['soft']:
                 if M.DIM_LABEL[k] not in soft_dims:
                     soft_dims.append(M.DIM_LABEL[k])
-        else:
+        elif v['verdict'] == 'ref':
             for k in v['hard']:
-                if M.DIM_LABEL[k] not in hard_dims:
-                    hard_dims.append(M.DIM_LABEL[k])
+                if M.DIM_LABEL[k] not in ref_dims:
+                    ref_dims.append(M.DIM_LABEL[k])
             rp = v['ref_row']
             pv = rp['price'] if rp is not None else None
             ref_parts.append(f"{period}→底表选项『{v['sku_raw']}』"
                              + (f" ${float(pv):.2f}" if pv is not None and pd.notna(pv) else ''))
+        else:  # nomatch：明显不是同商品，不取价、不给参照
+            for k in v['hard']:
+                if M.DIM_LABEL[k] not in nomatch_dims:
+                    nomatch_dims.append(M.DIM_LABEL[k])
     if soft_dims:
         reasons.append(f"{'/'.join(soft_dims)}不同（不影响单价），照常取价")
-    if hard_dims:
-        reasons.append(f"⚠ {'/'.join(hard_dims)}不同（影响单价），不取价，见参照信息供运营判断")
+    if ref_dims:
+        reasons.append(f"⚠ {'/'.join(ref_dims)}不同（影响单价），不取价，见参照信息供运营判断")
+    if nomatch_dims:
+        reasons.append(f"⛔ {'/'.join(nomatch_dims)}不同——判定不是同款，不取价也不给参照")
     ref_info = '；'.join(ref_parts)
 
     return {

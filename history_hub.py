@@ -685,15 +685,16 @@ def page_sku_query():
         concl = out['取价结论'] if '取价结论' in out.columns else pd.Series(['无价'] * total)
         n_take = int((concl == '取到价').sum())
         n_ref = int((concl == '仅参照').sum())
+        n_nomatch = int((concl == '型号不符').sum())
         denom = total - n_new  # 新品本就没有历史价，不计入匹配率分母
         rate = n_take / denom * 100 if denom else 0
 
         k1, k2, k3, k4, k5, k6 = st.columns(6)
         for col, lab, val, hint in [
             (k1, '匹配率', f'{rate:.0f}%', '除新品外，直接取到历史价的比例'),
-            (k2, '高', f'{n_high}', 'ID一致 或 商品名高度相似'),
-            (k3, '中/低', f'{n_mid}', '大致同款，建议抽查'),
-            (k4, '仅参照', f'{n_ref}', '数量/容量/瓦数/型号等不同，不取价、给参照'),
+            (k2, '取到价', f'{n_take}', '同款、规格不影响单价，已填历史价'),
+            (k3, '仅参照', f'{n_ref}', '数量/容量/瓦数/电压不同，不取价、给参照'),
+            (k4, '型号不符', f'{n_nomatch}', 'Pro/长度/底型号不同，明显不是同款，不取价也不给参照'),
             (k5, '未匹配', f'{n_no}', '名称不够像，底表没有'),
             (k6, '新品', f'{n_new}', 'ID为空或标了新品，本就无历史价'),
         ]:
@@ -712,8 +713,10 @@ def page_sku_query():
                            file_name='历史价_模糊匹配结果.xlsx',
                            mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
                            key='skq_dl')
-        st.caption('💡 「依据」列写清了每行为什么这么判；颜色/尺码/型号后缀不同照常取价，'
-                   '数量/容量/瓦数/长度/电压/Pro等不同则不取价，在「参照信息(运营判断)」列给出底表的SKU选项和价格供你判断。')
+        st.caption('💡 「依据」列写清了每行为什么这么判。规格差异分三档：'
+                   '① 颜色/尺码/型号后缀不同 → 不影响单价，照常取价；'
+                   '② 数量/容量(mAh)/瓦数/电压不同 → 同款但影响单价，不取价，在「参照信息(运营判断)」列给出底表SKU选项和价格供你判断；'
+                   '③ Pro/Plus等修饰词、长度、底型号不同 → 明显不是同款，判「型号不符」，不取价也不给参照。')
 
 
 def render():

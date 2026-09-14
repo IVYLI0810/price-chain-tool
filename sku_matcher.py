@@ -216,7 +216,12 @@ LEN_RE = re.compile(r'(\d+(?:\.\d+)?)\s*(inch|inches|cm|m|ft)\b', re.I)
 SIZE_RE = re.compile(r'(?:eu|us|uk)\s?(\d+(?:\.\d+)?)\b|(\d{3})\s?mm\b', re.I)
 CODEBASE_RE = re.compile(r'^([A-Za-z]{2,6}\d+)(?:[-–]([A-Za-z0-9]+))?$', re.I)
 
-HARD_DIMS = ('qty', 'cap', 'watt', 'len', 'volt', 'mod', 'base')
+# HARD 差异分两档：
+#  REF_DIMS     —— 仍是同款、只是影响单价的规格（数量/容量/瓦数/电压）→ 不取价，但给参照
+#  NOMATCH_DIMS —— 明显不是同商品（Pro/Plus等修饰词、长度、底型号）→ 不取价、也不给参照，直接判型号不符
+REF_DIMS = ('qty', 'cap', 'watt', 'volt')
+NOMATCH_DIMS = ('mod', 'len', 'base')
+HARD_DIMS = REF_DIMS + NOMATCH_DIMS
 SOFT_DIMS = ('color', 'size', 'suffix')
 AMBIGUOUS_DIMS = ('mod', 'base', 'qty', 'cap', 'watt', 'len', 'volt')
 DIM_LABEL = {'qty': '数量', 'cap': '容量', 'watt': '瓦数', 'len': '长度', 'volt': '电压',
