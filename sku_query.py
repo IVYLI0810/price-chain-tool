@@ -10,6 +10,7 @@ SKU 历史价 · 查询层
 """
 
 import sqlite3
+from functools import lru_cache
 from pathlib import Path
 
 import pandas as pd
@@ -77,6 +78,16 @@ def build_products(df: pd.DataFrame):
             'rows': g,
         })
     return products
+
+
+@lru_cache(maxsize=1)
+def get_cached_products():
+    """进程级缓存：底表只解析一次，全站所有会话共享（只读，不修改）。
+    避免每次点「开始匹配」都重读 CSV + 重拆 SKU 选项，多人并发时显著降 CPU。"""
+    detail = load_detail()
+    products = build_products(detail)
+    name_pool = [p['name_norm'] for p in products]
+    return detail, products, name_pool
 
 
 def _id_score(input_id, ids) -> float:
@@ -214,9 +225,12 @@ def match_batch(df_input: pd.DataFrame, col_id, col_name, col_sku, db_path=None)
     批量匹配。df_input 至少含 col_id/col_name/col_sku 三列（列名由调用方传入）。
     返回结果 DataFrame（原列 + 4期价 + 匹配度/等级/依据/命中信息）。
     """
-    detail = load_detail(db_path)
-    products = build_products(detail)
-    name_pool = [p['name_norm'] for p in products]
+    if db_path:
+        detail = load_detail(db_path)
+        products = build_products(detail)
+        name_pool = [p['name_norm'] for p in products]
+    else:
+        detail, products, name_pool = get_cached_products()
 
     def _clean(v):
         if v is None:

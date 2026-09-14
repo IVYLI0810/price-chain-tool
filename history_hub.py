@@ -589,20 +589,10 @@ def page_sku_query():
     import sku_query as SQ
 
     st.markdown('<div class="sec">🔎 SKU 历史价 · 批量模糊查</div>', unsafe_allow_html=True)
-    st.markdown(
-        '<div class="explain">上传一张含【商品ID / 商品名称 / sku选项】的表，'
-        '自动去「SKU明细」底表里找同款，返回 11 / 3 / 6 / 8 月的历史到手价，'
-        '并给出<b>匹配度</b>和<b>判断依据</b>。<br>'
-        '<b>匹配逻辑（名称优先）</b>：先看商品ID是否一致 → ID对不上就看<b>商品名是否高度相似</b>，'
-        '名称不够像直接判未匹配（SKU再像也不算）→ 确认是同款后，<b>再用 SKU 选项/型号区分该同款下的不同价格</b>'
-        '（Pro 款和非 Pro 款算不同型号，绝不会混价）。<br>'
-        '<b>新品自动跳过</b>：商品ID为空、或名称/SKU里写了「新品/待生成链接」的行，判为新品，'
-        '此前没出现过、本就无历史价，会留空标注「新品·无历史价」。</div>',
-        unsafe_allow_html=True)
 
-    # ── 底表检查（优先读纯文本 sku_detail.csv，其次 history_data.db） ──
+    # ── 底表检查（优先读纯文本 sku_detail.csv，其次 history_data.db；进程级缓存） ──
     try:
-        detail = SQ.load_detail()
+        detail = SQ.get_cached_products()[0]
     except Exception as e:  # noqa
         st.error(f'读取底表失败：{e}')
         return
