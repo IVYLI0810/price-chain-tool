@@ -681,17 +681,21 @@ def page_sku_query():
         n_high = int((graded == '高').sum())
         n_mid = int((graded == '中').sum()) + int((graded == '低').sum())
         n_new = int((graded == '新品·无历史价').sum())
-        n_no = int(graded.isin(['未匹配', '型号不符']).sum())
+        n_no = int((graded == '未匹配').sum())
+        concl = out['取价结论'] if '取价结论' in out.columns else pd.Series(['无价'] * total)
+        n_take = int((concl == '取到价').sum())
+        n_ref = int((concl == '仅参照').sum())
         denom = total - n_new  # 新品本就没有历史价，不计入匹配率分母
-        rate = (denom - n_no) / denom * 100 if denom else 0
+        rate = n_take / denom * 100 if denom else 0
 
-        k1, k2, k3, k4, k5 = st.columns(5)
+        k1, k2, k3, k4, k5, k6 = st.columns(6)
         for col, lab, val, hint in [
-            (k1, '匹配率', f'{rate:.0f}%', '除新品外，成功查到历史价的比例'),
+            (k1, '匹配率', f'{rate:.0f}%', '除新品外，直接取到历史价的比例'),
             (k2, '高', f'{n_high}', 'ID一致 或 商品名高度相似'),
             (k3, '中/低', f'{n_mid}', '大致同款，建议抽查'),
-            (k4, '未匹配/型号不符', f'{n_no}', '名称不够像，或该型号底表没有'),
-            (k5, '新品', f'{n_new}', 'ID为空或标了新品，本就无历史价'),
+            (k4, '仅参照', f'{n_ref}', '数量/容量/瓦数/型号等不同，不取价、给参照'),
+            (k5, '未匹配', f'{n_no}', '名称不够像，底表没有'),
+            (k6, '新品', f'{n_new}', 'ID为空或标了新品，本就无历史价'),
         ]:
             col.markdown(f'<div class="kpi"><div class="k">{lab}</div>'
                          f'<div class="v" style="font-size:24px">{val}</div>'
@@ -708,8 +712,8 @@ def page_sku_query():
                            file_name='历史价_模糊匹配结果.xlsx',
                            mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
                            key='skq_dl')
-        st.caption('💡 「依据」列写清了每行为什么这么判：ID是否一致、名称相似多少、SKU选项命中了底表哪条。'
-                   '匹配度低或型号不符的行会留空，不会硬塞一个价给你。')
+        st.caption('💡 「依据」列写清了每行为什么这么判；颜色/尺码/型号后缀不同照常取价，'
+                   '数量/容量/瓦数/长度/电压/Pro等不同则不取价，在「参照信息(运营判断)」列给出底表的SKU选项和价格供你判断。')
 
 
 def render():

@@ -98,44 +98,88 @@ def _id_score(input_id, ids) -> float:
     return 100.0 if str(input_id).strip() in ids else 0.0
 
 
+def _row_dim_verdict(in_dims, row_options, strict_mod=False):
+    """输入维度 vs 底表某行各选项：取差异最小的一组 (hard, soft)。"""
+    if in_dims is None or not row_options:
+        return [], []
+    best = None
+    for co in row_options:
+        hard, soft = M.dim_diffs(in_dims, M.extract_dims(co), strict_mod=strict_mod)
+        key = (len(hard), len(soft))
+        if best is None or key < best[0]:
+            best = (key, hard, soft)
+    return best[1], best[2]
+
+
+def _ambiguous_dim(pr):
+    """输入没写规格时：该期各行之间某影响单价的维度取值不一 → 无法代运营选择，判参照。"""
+    opts_all = [o for opts in pr['options'] for o in (opts or [])]
+    # mod 特殊：一方有 Pro、一方无，也算取值不一（None 会被通用循环漏掉）
+    if 'mod' in M.AMBIGUOUS_DIMS and M.mod_varies(opts_all):
+        return 'mod'
+    for dim in M.AMBIGUOUS_DIMS:
+        if dim == 'mod':
+            continue
+        vals = set()
+        for opts in pr['options']:
+            for o in opts:
+                v = M.extract_dims(o).get(dim)
+                if v:
+                    vals.add(v)
+        if len(vals) > 1:
+            return dim
+    return None
+
+
 def _pick_period_price(prod_rows, input_sku):
     """
-    在选中商品内，按期次挑价：
-      - 有输入SKU：挑型号最贴合的行（优先 model_ok!=False），取该行到手价
-      - 无输入SKU：取当期最低价（与原口径一致）
-    返回 {period: (price, sku_raw, sku_score, model_ok)}
+    在选中商品内，按期次挑价（规格维度分类）：
+      - SOFT 差异（颜色/尺码/同底型号后缀）→ 照常取价，verdict=take
+      - HARD 差异（数量/容量/瓦数/长度/电压/Pro修饰词/底型号）→ 不取价，verdict=ref（给参照）
+      - 无输入SKU：取当期最低价；但若该期影响单价的维度取值不一 → verdict=ref
+    返回 {period: {price, verdict, hard, soft, sku_raw, ref_row, sku_score}}
     """
     out = {}
-    have_sku = bool(M.split_sku_options(input_sku))
+    in_opts = M.split_sku_options(input_sku)
+    have_sku = bool(in_opts)
+    in_dims = M.extract_dims(' '.join(in_opts)) if have_sku else None
+    all_opts = [o for opts in prod_rows['options'] for o in (opts or [])]
+    strict_mod = M.mod_varies(all_opts)   # 该商品是否真的区分 Pro/非Pro
     for period in M.PERIODS:
         pr = prod_rows[prod_rows['period'] == period]
         if pr.empty:
             continue
+        pr2 = pr.dropna(subset=['price'])
+        low_row = (pr2 if not pr2.empty else pr).sort_values('price').iloc[0]
         if not have_sku:
-            # 取当期最低价那行
-            pr2 = pr.dropna(subset=['price'])
-            row = (pr2 if not pr2.empty else pr).sort_values('price').iloc[0]
-            out[period] = {'price': row['price'], 'sku_raw': row['sku_raw'],
-                           'sku_score': None, 'model_ok': None}
+            amb = _ambiguous_dim(pr)
+            if amb:
+                out[period] = {'price': None, 'verdict': 'ref', 'hard': [amb], 'soft': [],
+                               'sku_raw': low_row['sku_raw'], 'ref_row': low_row, 'sku_score': None}
+            else:
+                out[period] = {'price': low_row['price'], 'verdict': 'take', 'hard': [], 'soft': [],
+                               'sku_raw': low_row['sku_raw'], 'ref_row': None, 'sku_score': None}
             continue
-        best = None
+        take_best, ref_best = None, None
         for _, row in pr.iterrows():
+            hard, soft = _row_dim_verdict(in_dims, row['options'], strict_mod=strict_mod)
             sim = M.sku_similarity(input_sku, row['options'])
             sc = sim['score'] if sim['score'] is not None else -1
-            # model_ok False 的降权，避免选错型号
-            eff = sc if sim['model_ok'] is not False else sc * 0.3
-            if best is None or eff > best['eff']:
-                best = {'eff': eff, 'price': row['price'], 'sku_raw': row['sku_raw'],
-                        'sku_score': sim['score'], 'model_ok': sim['model_ok'],
-                        'best_option': sim['best_option']}
-        if best:
-            # 护栏：该期只有"另一个型号"的行 → 不给错型号的价，留空并标记
-            if best['model_ok'] is False:
-                out[period] = {'price': None, 'sku_raw': best['sku_raw'],
-                               'sku_score': best['sku_score'], 'model_ok': False,
-                               'model_conflict': True}
-            else:
-                out[period] = best
+            if not hard:
+                if take_best is None or sc > take_best['sc']:
+                    take_best = {'sc': sc, 'row': row, 'soft': soft}
+            elif ref_best is None or sc > ref_best['sc']:
+                ref_best = {'sc': sc, 'row': row, 'hard': hard}
+        if take_best:
+            r = take_best['row']
+            out[period] = {'price': r['price'], 'verdict': 'take', 'hard': [],
+                           'soft': take_best['soft'], 'sku_raw': r['sku_raw'],
+                           'ref_row': None, 'sku_score': take_best['sc']}
+        elif ref_best:
+            r = ref_best['row']
+            out[period] = {'price': None, 'verdict': 'ref', 'hard': ref_best['hard'],
+                           'soft': [], 'sku_raw': r['sku_raw'], 'ref_row': r,
+                           'sku_score': ref_best['sc']}
     return out
 
 
@@ -182,16 +226,19 @@ def match_one(input_id, input_name, input_sku, products, name_pool):
     p = best['product']
     id_hit = best['id_hit']
 
-    # ── SKU/型号：只在选中的同款商品内部用来挑价，不决定是不是同款 ──
-    all_opts = [o for opts in p['rows']['options'].tolist() for o in opts]
-    sksim = M.sku_similarity(input_sku, all_opts)
-    model_ok = sksim['model_ok']
+    # ── 按期取价（规格维度分类：SOFT差异取价，HARD差异只给参照） ──
+    period_price = _pick_period_price(p['rows'], input_sku)
+
+    verdicts = [v.get('verdict') for v in period_price.values()]
+    if any(v == 'take' for v in verdicts):
+        conclusion = '取到价'
+    elif any(v == 'ref' for v in verdicts):
+        conclusion = '仅参照'
+    else:
+        conclusion = '无价'
 
     score = M.match_score(id_hit, best['name_score'])
-    g = M.grade(id_hit, best['name_score'], model_ok)
-
-    # ── 按期取价（SKU 在这里发挥作用：同名商品下按型号/选项挑对应价） ──
-    period_price = _pick_period_price(p['rows'], input_sku)
+    g = M.grade(id_hit, best['name_score'])
 
     # ── 依据（人话） ──
     reasons = []
@@ -202,20 +249,41 @@ def match_one(input_id, input_name, input_sku, products, name_pool):
     else:
         reasons.append('无商品ID，靠商品名匹配')
     reasons.append(f"商品名相似 {best['name_score']:.0f}%")
-    if sksim['score'] is not None:
-        reasons.append('同款内按SKU挑价：' + sksim['detail'])
-    if g == '型号不符':
-        reasons.append('⚠ 商品名对上了，但输入的型号(如Pro款)在底表该商品里没有，未取价')
+
+    soft_dims, hard_dims, ref_parts = [], [], []
+    for period in M.PERIODS:
+        v = period_price.get(period)
+        if not v:
+            continue
+        if v['verdict'] == 'take':
+            for k in v['soft']:
+                if M.DIM_LABEL[k] not in soft_dims:
+                    soft_dims.append(M.DIM_LABEL[k])
+        else:
+            for k in v['hard']:
+                if M.DIM_LABEL[k] not in hard_dims:
+                    hard_dims.append(M.DIM_LABEL[k])
+            rp = v['ref_row']
+            pv = rp['price'] if rp is not None else None
+            ref_parts.append(f"{period}→底表选项『{v['sku_raw']}』"
+                             + (f" ${float(pv):.2f}" if pv is not None and pd.notna(pv) else ''))
+    if soft_dims:
+        reasons.append(f"{'/'.join(soft_dims)}不同（不影响单价），照常取价")
+    if hard_dims:
+        reasons.append(f"⚠ {'/'.join(hard_dims)}不同（影响单价），不取价，见参照信息供运营判断")
+    ref_info = '；'.join(ref_parts)
 
     return {
-        'matched': g not in ('未匹配', '型号不符'),
+        'matched': g != '未匹配',
         'grade': g,
         'score': score,
+        'conclusion': conclusion,
+        'ref_info': ref_info,
         'std_name': p['std_name'],
         'matched_ids': '/'.join(sorted(p['ids'])),
         'period_price': period_price,
         'reason': '；'.join(reasons) if reasons else '—',
-        'id_hit': id_hit, 'name_score': best['name_score'], 'sku_score': sksim['score'],
+        'id_hit': id_hit, 'name_score': best['name_score'],
     }
 
 
@@ -250,7 +318,8 @@ def match_batch(df_input: pd.DataFrame, col_id, col_name, col_sku, db_path=None)
         is_new, new_reason = M.is_new_product(iid, iname, isku, has_id_col)
         if is_new:
             rec.update({'匹配等级': '新品·无历史价', '匹配度%': None, '依据': new_reason,
-                        '命中标准商品名': '', '命中商品ID': ''})
+                        '命中标准商品名': '', '命中商品ID': '',
+                        '取价结论': '新品·无历史价', '参照信息(运营判断)': ''})
             for p_ in M.PERIODS:
                 rec[f'{p_}到手价($)'] = None
             recs.append(rec)
@@ -258,31 +327,27 @@ def match_batch(df_input: pd.DataFrame, col_id, col_name, col_sku, db_path=None)
 
         res = match_one(iid, iname, isku, products, name_pool)
         if not res.get('matched'):
-            # 区分"完全没找到"与"找到了但型号不符"
-            if res.get('grade') == '型号不符':
-                reason = res.get('reason', '型号不符')
-                hit_name = res.get('std_name', '')
-                hit_ids = res.get('matched_ids', '')
-                g = '型号不符'
-            else:
-                reason = '底表中未找到足够相似的商品'
-                hit_name, hit_ids, g = '', '', '未匹配'
-            rec.update({'匹配等级': g, '匹配度%': res.get('score'), '依据': reason,
-                        '命中标准商品名': hit_name, '命中商品ID': hit_ids})
+            rec.update({'匹配等级': '未匹配', '匹配度%': res.get('score'),
+                        '依据': '底表中未找到足够相似的商品',
+                        '命中标准商品名': '', '命中商品ID': '',
+                        '取价结论': '无价', '参照信息(运营判断)': ''})
             for p_ in M.PERIODS:
                 rec[f'{p_}到手价($)'] = None
             recs.append(rec)
             continue
         pp = res['period_price']
         for p_ in M.PERIODS:
-            v = pp.get(p_, {}).get('price')
-            rec[f'{p_}到手价($)'] = round(float(v), 2) if v is not None and pd.notna(v) else None
+            v = pp.get(p_, {})
+            price = v.get('price') if v.get('verdict') == 'take' else None
+            rec[f'{p_}到手价($)'] = round(float(price), 2) if price is not None and pd.notna(price) else None
         rec.update({
             '匹配等级': res['grade'],
             '匹配度%': res['score'],
             '依据': res['reason'],
             '命中标准商品名': res['std_name'],
             '命中商品ID': res['matched_ids'],
+            '取价结论': res['conclusion'],
+            '参照信息(运营判断)': res['ref_info'],
         })
         recs.append(rec)
     return pd.DataFrame(recs)

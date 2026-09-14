@@ -51,6 +51,24 @@ COLOR_WORDS = {
     'transparent', 'clear', 'mix', 'dark', 'light', 'sky', 'rose', 'mint', 'cyan',
 }
 
+# 多语言颜色词（中/韩/英文变体）→ 归一到英文规范色，供规格维度比对
+# 输入表单可能写中文/韩文，底表多为英文，需归一后才能判断"是否同色"
+COLOR_MULTILINGUAL = {
+    # 中文
+    '黑色': 'black', '黑': 'black', '白色': 'white', '白': 'white', '灰色': 'gray', '灰': 'gray',
+    '蓝色': 'blue', '蓝': 'blue', '红色': 'red', '红': 'red', '绿色': 'green', '绿': 'green',
+    '黄色': 'yellow', '黄': 'yellow', '粉色': 'pink', '粉红': 'pink', '粉': 'pink',
+    '紫色': 'purple', '紫': 'purple', '橙色': 'orange', '橙': 'orange', '棕色': 'brown', '棕': 'brown',
+    '咖啡色': 'brown', '米色': 'beige', '米白': 'beige', '银色': 'silver', '银': 'silver',
+    '金色': 'gold', '金': 'gold', '藏青': 'navy', '卡其': 'khaki', '透明': 'clear', '奶油': 'cream',
+    # 韩文
+    '블랙': 'black', '검정': 'black', '화이트': 'white', '흰색': 'white', '그레이': 'gray',
+    '회색': 'gray', '블루': 'blue', '파랑': 'blue', '레드': 'red', '빨강': 'red',
+    '그린': 'green', '초록': 'green', '옐로우': 'yellow', '노랑': 'yellow', '핑크': 'pink',
+    '퍼플': 'purple', '보라': 'purple', '오렌지': 'orange', '브라운': 'brown', '베이지': 'beige',
+    '실버': 'silver', '골드': 'gold', '네이비': 'navy', '아이보리': 'ivory',
+}
+
 # 规格单位（这些数字是"规格"不是"型号"，比如 256GB / 45W / 110mm）
 SPEC_UNITS = r'(?:gb|mb|tb|mah|wh|w|v|a|mm|cm|inch|in|k|hz|pcs|pc|g|l|ml|kg|core|pin)'
 
@@ -184,6 +202,109 @@ def _jaccard(a: set, b: set) -> float:
     return len(a & b) / len(a | b)
 
 
+# ─────────────────────────────────────────────
+# 规格维度抽取与分类比对（2026-09 新增）
+#   同品判定靠 ID+名称；取价判定靠规格维度分类：
+#   HARD（影响单价）：数量/容量/瓦数/长度/电压/Pro等修饰词/底型号 → 差异时不取价、只给参照
+#   SOFT（不影响单价）：颜色/尺码/同底型号后缀(色码) → 差异时照常取价、依据里注明
+# ─────────────────────────────────────────────
+QTY_RE = re.compile(r'(\d+)\s*(?:pcs|pc|pieces|sets?|packs?|pairs?|개입|个装)|:\s*(\d{2,4})$|(\d+)\s*in\s*1', re.I)
+CAP_RE = re.compile(r'(\d+(?:\.\d+)?)\s*(mah|wh|gb|tb|mb)\b', re.I)
+WATT_RE = re.compile(r'(\d+(?:\.\d+)?)\s*(kw|w)\b', re.I)
+VOLT_RE = re.compile(r'(\d+(?:\.\d+)?)\s*v\b', re.I)
+LEN_RE = re.compile(r'(\d+(?:\.\d+)?)\s*(inch|inches|cm|m|ft)\b', re.I)
+SIZE_RE = re.compile(r'(?:eu|us|uk)\s?(\d+(?:\.\d+)?)\b|(\d{3})\s?mm\b', re.I)
+CODEBASE_RE = re.compile(r'^([A-Za-z]{2,6}\d+)(?:[-–]([A-Za-z0-9]+))?$', re.I)
+
+HARD_DIMS = ('qty', 'cap', 'watt', 'len', 'volt', 'mod', 'base')
+SOFT_DIMS = ('color', 'size', 'suffix')
+AMBIGUOUS_DIMS = ('mod', 'base', 'qty', 'cap', 'watt', 'len', 'volt')
+DIM_LABEL = {'qty': '数量', 'cap': '容量', 'watt': '瓦数', 'len': '长度', 'volt': '电压',
+             'mod': '型号(Pro/Plus等)', 'base': '底型号', 'color': '颜色', 'size': '尺码',
+             'suffix': '型号后缀'}
+
+
+def extract_dims(text) -> dict:
+    """从一条 SKU 选项文本抽出各规格维度值（没有则为 None）。"""
+    t = _fullwidth_to_half(str(text or '')).strip()
+    d = {k: None for k in ('qty', 'cap', 'watt', 'len', 'volt', 'size', 'color', 'mod', 'base', 'suffix')}
+    m = QTY_RE.search(t)
+    if m:
+        d['qty'] = next((g for g in m.groups() if g), None)
+    m = CAP_RE.search(t)
+    if m:
+        d['cap'] = f'{float(m.group(1)):g}{m.group(2).lower()}'
+    m = WATT_RE.search(t)
+    if m:
+        d['watt'] = f'{float(m.group(1)):g}{m.group(2).lower()}'
+    m = VOLT_RE.search(t)
+    if m:
+        d['volt'] = f'{float(m.group(1)):g}v'
+    m = LEN_RE.search(t)
+    if m:
+        d['len'] = f'{float(m.group(1)):g}{m.group(2).lower()}'
+    m = SIZE_RE.search(t)
+    if m:
+        d['size'] = next((g for g in m.groups() if g), None)
+    low = t.lower()
+    cols = {COLOR_ALIAS.get(w, w) for w in COLOR_WORDS if w in low}
+    for term, canon in COLOR_MULTILINGUAL.items():   # 中/韩文颜色
+        if term in t:
+            cols.add(COLOR_ALIAS.get(canon, canon))
+    if cols:
+        d['color'] = frozenset(cols)
+    mods = {w for w in MODEL_MODIFIERS if re.search(r'\b' + w + r'\b', low)}
+    if mods:
+        d['mod'] = frozenset(mods)
+    cm = CODEBASE_RE.match(t)
+    if cm:
+        d['base'] = cm.group(1).upper()
+        d['suffix'] = (cm.group(2) or '').upper() or None
+    return d
+
+
+def mod_varies(option_texts) -> bool:
+    """该商品的选项里 mod 维度（Pro/Plus/Max…）是否有>1种取值（含"无修饰词"这一取值）。
+    True 说明商品确实区分 Pro/非Pro，比对时须严格。"""
+    vals = set()
+    for t in option_texts:
+        m = extract_dims(t).get('mod')
+        vals.add(frozenset(m) if m else frozenset())
+    return len(vals) > 1
+
+
+def dim_diffs(a: dict, b: dict, strict_mod: bool = False):
+    """比较两侧规格维度，返回 (hard差异列表, soft差异列表)。
+    默认只比双方都写了的维度；strict_mod=True 时，mod 维度（Pro/Plus等）
+    一方有一方无也算 hard 冲突（该商品确实区分 Pro/非Pro）。"""
+    hard, soft = [], []
+    for k in HARD_DIMS:
+        va, vb = a.get(k), b.get(k)
+        if k == 'mod' and strict_mod:
+            sa = frozenset(va) if va else frozenset()
+            sb = frozenset(vb) if vb else frozenset()
+            if sa != sb:
+                hard.append(k)
+            continue
+        if va is None or vb is None:
+            continue
+        if va != vb:
+            hard.append(k)
+    for k in SOFT_DIMS:
+        va, vb = a.get(k), b.get(k)
+        if va is None or vb is None:
+            continue
+        if k == 'color':
+            if not (va & vb):          # 颜色集合完全不交集才算差异
+                soft.append(k)
+        elif k == 'suffix':
+            if a.get('base') and a.get('base') == b.get('base') and va != vb:
+                soft.append(k)         # 同底型号的后缀(色码)差异 → 软
+        elif va != vb:
+            soft.append(k)
+    return hard, soft
+
+
 def name_similarity(a: str, b: str) -> float:
     """商品名相似度 0~100。综合 token 重合 + 序列相似 + 型号命中。"""
     na, nb = norm_text(a), norm_text(b)
@@ -270,15 +391,12 @@ def sku_similarity(input_sku: str, cand_options: list) -> dict:
 NAME_GATE = 80.0
 
 
-def grade(id_hit: bool, name_score: float, model_ok) -> str:
-    """同款判定 + 分级。name_score 0~100；model_ok 来自选中商品内的 SKU 型号比对。"""
+def grade(id_hit: bool, name_score: float) -> str:
+    """同款判定 + 分级（只看 ID/名称；规格差异由取价结论单独表达）。"""
     name_score = name_score or 0.0
     # 根本不算同款：ID没命中且名称不够像
     if not id_hit and name_score < NAME_GATE:
         return '未匹配'
-    # 名称/ID对上了，但输入的型号在底表该商品里找不到（如只有非Pro、没有Pro）
-    if model_ok is False:
-        return '型号不符'
     if id_hit and name_score >= 75:
         return '高'
     if id_hit:
